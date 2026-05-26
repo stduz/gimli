@@ -1,0 +1,21 @@
+[Unit]
+Description=Gimli Rover local RC PWM input
+After=gimli-rover.service
+Wants=gimli-rover.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=notify
+User=gimli1mb
+WorkingDirectory=/opt/gimli
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/gimli/.venv/bin/python -m backend.rc_input
+RuntimeDirectory=gimli
+RuntimeDirectoryMode=0755
+Restart=always
+RestartSec=2
+WatchdogSec=30s
+SupplementaryGroups=gpio
+
+[Install]
+WantedBy=multi-user.target

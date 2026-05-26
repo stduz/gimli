@@ -1,0 +1,6 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+gpiozero==2.0.1
+pydantic==2.9.2
+# lgpio: на Raspberry Pi OS ставится через apt (python3-lgpio),
+#        venv должен быть с --system-site-packages (см. scripts/install.sh)

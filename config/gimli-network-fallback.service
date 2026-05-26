@@ -1,0 +1,13 @@
+[Unit]
+Description=Gimli Rover setup Wi-Fi AP fallback
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/gimli-network-fallback monitor
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

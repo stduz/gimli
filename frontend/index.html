@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>Gimli Rover</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">GIMLI · РОВЕР</div>
+  <div class="top-actions">
+    <button id="settings-toggle" class="toggle">Налаштування</button>
+    <button id="tx12-toggle" class="toggle">TX12</button>
+    <button id="estop" class="estop">СТОП</button>
+  </div>
+  <div class="status">
+    <span id="ws-dot" class="dot off"></span>
+    <span id="ws-text">нема зв'язку</span>
+    <span class="sep">·</span>
+    <span id="latency">— мс</span>
+  </div>
+  <div class="mode-strip">
+    <span class="mode-chip">ARM <b id="top-arm">—</b></span>
+    <span class="mode-chip">RC <b id="top-rc">—</b></span>
+    <span class="mode-chip">РЕЖИМ <b id="top-daynight">—</b></span>
+    <span class="mode-chip">BTN <b id="top-buttons">—</b></span>
+  </div>
+</header>
+
+<main class="grid">
+  <section class="cam-wrap">
+    <div class="camera-switcher">
+      <button id="active-cam1" type="button" class="toggle primary">Передня</button>
+      <button id="active-cam2" type="button" class="toggle">Задня</button>
+      <button id="audio-toggle" type="button" class="toggle">Звук</button>
+      <span id="active-camera-status">активна: передня</span>
+      <span id="audio-status">звук вимк.</span>
+    </div>
+    <div class="cam-tile active" id="tile-cam1" data-stream="cam1">
+      <div class="cam-label">КАМ 1 — передня</div>
+      <div class="cam-controls" data-camera="cam1">
+        <button type="button" data-light="auto">Авто</button>
+        <button type="button" data-light="on">Світло</button>
+        <button type="button" data-light="off">Вимк.</button>
+        <input type="range" min="0" max="100" value="60" data-light-level>
+        <span data-camera-status></span>
+      </div>
+      <video id="cam1" autoplay playsinline muted></video>
+      <img id="cam1-fallback" class="cam-fallback hidden" alt="">
+    </div>
+    <div class="cam-tile pip" id="tile-cam2" data-stream="cam2">
+      <div class="cam-label">КАМ 2 — задня</div>
+      <div class="cam-controls" data-camera="cam2">
+        <button type="button" data-light="auto">Авто</button>
+        <button type="button" data-light="on">Світло</button>
+        <button type="button" data-light="off">Вимк.</button>
+        <input type="range" min="0" max="100" value="60" data-light-level>
+        <span data-camera-status></span>
+      </div>
+      <video id="cam2" autoplay playsinline muted></video>
+      <img id="cam2-fallback" class="cam-fallback hidden" alt="">
+    </div>
+  </section>
+
+  <section class="osd">
+    <div><span class="k">зв'язок</span><span id="osd-link" class="v">—</span></div>
+    <div><span class="k">ARM</span><span id="osd-arm" class="v">—</span></div>
+    <div><span class="k">RC</span><span id="osd-rc" class="v">—</span></div>
+    <div><span class="k">режим</span><span id="osd-daynight" class="v">—</span></div>
+    <div><span class="k">кнопки</span><span id="osd-buttons" class="v">—</span></div>
+    <div><span class="k">затримка</span><span id="osd-latency" class="v">— мс</span></div>
+    <div><span class="k">живлення</span><span id="osd-voltage" class="v">— V</span></div>
+    <div><span class="k">струм</span><span id="osd-current" class="v">— A</span></div>
+    <div><span class="k">потужність</span><span id="osd-power" class="v">— W</span></div>
+    <div><span class="k">GPS</span><span id="osd-gps" class="v">—</span></div>
+    <div><span class="k">компас</span><span id="osd-heading" class="v">—°</span></div>
+    <div><span class="k">камера 1</span><span id="osd-cam1" class="v">—</span></div>
+    <div><span class="k">камера 2</span><span id="osd-cam2" class="v">—</span></div>
+    <div><span class="k">мотор</span><span id="osd-motor" class="v">—</span></div>
+  </section>
+
+  <section class="hud">
+    <div class="readout">
+      <div><span class="k">газ</span><span id="r-throttle" class="v">0.00</span></div>
+      <div><span class="k">кермо</span><span id="r-steering" class="v">0.00</span></div>
+      <div><span class="k">лівий</span><span id="r-left" class="v">0.00</span></div>
+      <div><span class="k">правий</span><span id="r-right" class="v">0.00</span></div>
+      <div><span class="k">TX12</span><span id="r-tx12" class="v small">—</span></div>
+    </div>
+  </section>
+
+  <section class="joy-wrap">
+    <div id="joystick" class="joystick">
+      <div id="joy-knob" class="knob"></div>
+    </div>
+    <div class="joy-hint">Тягни — газ/кермо. WASD / стрілки. TX12 через USB.</div>
+  </section>
+</main>
+
+<!-- TX12 калібрування -->
+<aside id="tx12-panel" class="tx12-panel hidden">
+  <div class="tx12-head">
+    <span>TX12 / канали пульта</span>
+    <button id="tx12-close" class="x">×</button>
+  </div>
+  <div class="tx12-id" id="tx12-id">не підключено</div>
+  <div class="tx12-cfg">
+    <label><input type="checkbox" id="cfg-tx12-enabled"> керування з веб</label>
+    <label>вісь газу
+      <select id="cfg-thr-axis"></select>
+      <input type="checkbox" id="cfg-thr-inv"> інверт.
+    </label>
+    <label>вісь керма
+      <select id="cfg-str-axis"></select>
+      <input type="checkbox" id="cfg-str-inv"> інверт.
+    </label>
+    <label>кнопка Arm <input type="number" id="cfg-arm-btn" min="0" max="31" style="width:50px"></label>
+    <label><input type="checkbox" id="cfg-arm-req"> вимагати Arm</label>
+    <label>кнопка стоп <input type="number" id="cfg-estop-btn" min="0" max="31" style="width:50px"></label>
+    <label>мертва зона <input type="number" id="cfg-dz" min="0" max="0.5" step="0.01" style="width:60px"></label>
+  </div>
+  <div class="tx12-axes" id="tx12-axes"></div>
+  <div class="tx12-buttons" id="tx12-buttons"></div>
+</aside>
+
+<aside id="settings-panel" class="settings-panel hidden">
+  <div class="settings-head">
+    <span>Налаштування ровера</span>
+    <button id="settings-close" class="x">×</button>
+  </div>
+  <form id="settings-form">
+    <section class="settings-section network-primary">
+      <h2>Мережа: LAN / Wi-Fi</h2>
+      <div class="network-settings">
+        <label>канал <select id="set-link-mode"><option value="auto">авто</option><option value="lan">LAN</option><option value="wifi">Wi-Fi</option></select></label>
+        <label>Wi-Fi SSID <input type="text" id="set-wifi-ssid"></label>
+        <label>Wi-Fi пароль <input type="password" id="set-wifi-password" placeholder="порожньо = не міняти"></label>
+        <label>профіль Starlink <select id="set-profile"><option value="low">економний / sub</option><option value="balanced">збалансований</option><option value="high">якісний / main</option></select></label>
+        <label>ціль kbps <input type="number" id="set-kbps" min="200" max="12000" step="100"></label>
+        <label><input type="checkbox" id="set-ap-enabled"> резервна точка доступу</label>
+        <label>AP SSID <input type="text" id="set-ap-ssid" placeholder="Gimli-Rover-Setup"></label>
+        <label>AP пароль <input type="password" id="set-ap-password" placeholder="порожньо = не міняти"></label>
+      </div>
+      <div class="wifi-scan-row">
+        <button type="button" id="scan-wifi" class="toggle">Сканувати Wi-Fi</button>
+        <button type="button" id="connect-wifi" class="toggle primary">Підключитись до Wi-Fi</button>
+        <button type="button" id="start-setup-ap" class="toggle">Увімкнути AP</button>
+        <button type="button" id="stop-setup-ap" class="toggle">Вимкнути AP</button>
+        <span id="wifi-scan-status"></span>
+      </div>
+      <div id="wifi-networks" class="wifi-networks"></div>
+      <div class="network-status" id="network-status">мережа: —</div>
+    </section>
+
+    <section class="settings-section">
+      <h2>Камери</h2>
+      <div class="wifi-scan-row">
+        <button type="button" id="apply-video-profile" class="toggle primary">Застосувати профіль відео</button>
+        <span id="video-profile-status"></span>
+      </div>
+      <div class="camera-settings" data-camera="cam1">
+        <label><input type="checkbox" data-field="enabled"> КАМ 1 увімкнена</label>
+        <label>назва <input type="text" data-field="label"></label>
+        <label>адреса/IP <input type="text" data-field="host" placeholder="192.168.1.108"></label>
+        <label>логін <input type="text" data-field="username" placeholder="admin"></label>
+        <label>пароль <input type="password" data-field="password" placeholder="порожньо = не міняти"></label>
+        <label>основний шлях <input type="text" data-field="main_path" placeholder="/media/video1"></label>
+        <label>дод. шлях <input type="text" data-field="sub_path" placeholder="/media/video2"></label>
+        <label>потік <select data-field="preferred"><option value="main">основний</option><option value="sub">додатковий</option><option value="auto">авто</option></select></label>
+      </div>
+      <div class="camera-settings" data-camera="cam2">
+        <label><input type="checkbox" data-field="enabled"> КАМ 2 увімкнена</label>
+        <label>назва <input type="text" data-field="label"></label>
+        <label>адреса/IP <input type="text" data-field="host" placeholder="192.168.1.109"></label>
+        <label>логін <input type="text" data-field="username" placeholder="admin"></label>
+        <label>пароль <input type="password" data-field="password" placeholder="порожньо = не міняти"></label>
+        <label>основний шлях <input type="text" data-field="main_path" placeholder="/media/video1"></label>
+        <label>дод. шлях <input type="text" data-field="sub_path" placeholder="/media/video2"></label>
+        <label>потік <select data-field="preferred"><option value="main">основний</option><option value="sub">додатковий</option><option value="auto">авто</option></select></label>
+      </div>
+    </section>
+
+    <section class="settings-section">
+      <h2>Живлення</h2>
+      <div class="network-settings">
+        <label>вольтаж <input type="number" id="set-voltage" min="0" max="60" step="0.1" placeholder="ручний"></label>
+        <label>низький V <input type="number" id="set-low-voltage" min="0" max="60" step="0.1"></label>
+        <label><input type="checkbox" id="set-current-enabled"> I2C датчик струму</label>
+        <label>I2C адреса <input type="text" id="set-current-address" placeholder="0x45"></label>
+        <label>LSB струму A <input type="number" id="set-current-lsb" min="0.000001" max="1" step="0.000001"></label>
+      </div>
+    </section>
+
+    <section class="settings-section">
+      <h2>GPS / компас</h2>
+      <div class="network-settings">
+        <label>GPS режим <select id="set-gps-source"><option value="off">вимкнено</option><option value="auto">авто захист</option><option value="gps">увімкнено</option></select></label>
+        <label>GPS довіра <select id="set-gps-trust"><option value="disabled">вимкнено</option><option value="auto">авто</option><option value="trusted">довіряти</option></select></label>
+        <label><input type="checkbox" id="set-gps-enabled"> GPS увімкнений</label>
+        <label>фікс <select id="set-gps-fix"><option value="0">нема GPS</option><option value="2">2D</option><option value="3">3D</option><option value="4">DGPS</option><option value="5">RTK float</option><option value="6">RTK fixed</option></select></label>
+        <label>супутники <input type="number" id="set-gps-sat" min="0" max="64" step="1"></label>
+        <label>широта <input type="number" id="set-gps-lat" min="-90" max="90" step="0.0000001" placeholder="50.4501"></label>
+        <label>довгота <input type="number" id="set-gps-lon" min="-180" max="180" step="0.0000001" placeholder="30.5234"></label>
+        <label>висота, м <input type="number" id="set-gps-alt" min="-500" max="9000" step="0.1"></label>
+        <label>домашня широта <input type="number" id="set-home-lat" min="-90" max="90" step="0.0000001" placeholder="для захисту від спуфінгу"></label>
+        <label>домашня довгота <input type="number" id="set-home-lon" min="-180" max="180" step="0.0000001" placeholder="для захисту від спуфінгу"></label>
+        <label>стрибок км <input type="number" id="set-max-jump" min="0.1" max="1000" step="0.1"></label>
+        <label>курс <input type="number" id="set-heading" min="0" max="359.9" step="0.1" placeholder="0-359"></label>
+        <label>зсув курсу <input type="number" id="set-heading-offset" min="-180" max="180" step="0.1"></label>
+        <label>згладжування <input type="number" id="set-heading-smoothing" min="0" max="1" step="0.05"></label>
+        <label>компас X <select id="set-compass-x"><option value="x">+X</option><option value="-x">-X</option><option value="y">+Y</option><option value="-y">-Y</option><option value="z">+Z</option><option value="-z">-Z</option></select></label>
+        <label>компас Y <select id="set-compass-y"><option value="y">+Y</option><option value="-y">-Y</option><option value="x">+X</option><option value="-x">-X</option><option value="z">+Z</option><option value="-z">-Z</option></select></label>
+        <label>компас Z <select id="set-compass-z"><option value="z">+Z</option><option value="-z">-Z</option><option value="x">+X</option><option value="-x">-X</option><option value="y">+Y</option><option value="-y">-Y</option></select></label>
+        <label>швидкість м/с <input type="number" id="set-groundspeed" min="0" max="50" step="0.1"></label>
+      </div>
+      <div class="wifi-scan-row">
+        <button type="button" id="gps-off" class="toggle">GPS вимк.</button>
+        <button type="button" id="gps-auto" class="toggle">GPS авто</button>
+        <button type="button" id="gps-trusted" class="toggle">GPS довіра</button>
+      </div>
+      <div class="wifi-scan-row" style="margin-top:8px">
+        <strong>Калібрування компасу (hard-iron):</strong>
+        <button type="button" id="compass-cal-start" class="toggle primary">Калібрувати компас</button>
+        <button type="button" id="compass-cal-accept" class="toggle" disabled>Прийняти</button>
+        <button type="button" id="compass-cal-cancel" class="toggle" disabled>Скасувати</button>
+        <span id="compass-cal-status" style="margin-left:8px">—</span>
+      </div>
+      <details class="compass-cal-details">
+        <summary>Деталі калибровки / осі / наводки</summary>
+        <div class="wifi-scan-row" style="margin-top:8px">
+          <button type="button" id="compass-preset-matek" class="toggle">Matek M10Q перевернутий</button>
+          <button type="button" id="compass-preset-rotated" class="toggle">Matek повернутий 90°</button>
+          <span>Після пресету натисни «Зберегти».</span>
+        </div>
+        <div class="compass-cal-box">
+          <div><span>Якість</span><b id="compass-cal-quality">—</b></div>
+          <div><span>Сирі осі X/Y/Z</span><b id="compass-cal-raw">—</b></div>
+          <div><span>Діапазони X/Y/Z</span><b id="compass-cal-ranges">—</b></div>
+          <div><span>Мін/макс</span><b id="compass-cal-minmax">—</b></div>
+          <div class="wide"><span>Попередження</span><b id="compass-cal-warnings">—</b></div>
+          <div class="wide"><span>Остання дія</span><b id="compass-cal-message">—</b></div>
+        </div>
+        <div id="compass-cal-hint" style="font-size:12px;opacity:0.8;margin-top:4px">
+          Натисни «Калібрувати компас» і повільно проверни ровер по всіх осях: повний розворот 360°, нахил носом вгору/вниз і крен вліво/вправо.
+          Якщо якість погана або є попередження про метал, віднеси компас від силових дротів, VESC і мотора. Коли прогрес 100% — натисни «Прийняти».
+        </div>
+      </details>
+    </section>
+
+    <section class="settings-section">
+      <h2>WireGuard</h2>
+      <div class="network-settings">
+        <label><input type="checkbox" id="set-wg-enabled"> увімкнути конфіг WG</label>
+        <label>інтерфейс <input type="text" id="set-wg-interface" placeholder="wg0"></label>
+        <label>адреса <input type="text" id="set-wg-address" placeholder="10.8.0.2/24"></label>
+        <label>приватний ключ <input type="password" id="set-wg-private" placeholder="порожньо = не міняти"></label>
+        <label>публічний ключ peer <input type="text" id="set-wg-peer-public"></label>
+        <label>сервер <input type="text" id="set-wg-endpoint" placeholder="host:51820"></label>
+        <label>дозволені IP <input type="text" id="set-wg-allowed" placeholder="0.0.0.0/0"></label>
+        <label>утримання зв'язку <input type="number" id="set-wg-keepalive" min="0" max="120" step="1"></label>
+      </div>
+    </section>
+
+    <section class="settings-section">
+      <h2>QGroundControl / MAVLink</h2>
+      <div class="network-settings">
+        <label><input type="checkbox" id="set-mav-enabled"> увімкнути MAVLink</label>
+        <label>ID системи <input type="number" id="set-mav-system" min="1" max="255"></label>
+        <label>ID компонента <input type="number" id="set-mav-component" min="1" max="255"></label>
+        <label>адреса QGC
+          <input type="text" id="set-mav-host" placeholder="100.x.x.x" style="width:160px">
+        <button type="button" id="set-mav-useip" class="toggle">Мій IP</button>
+        </label>
+        <label>порт QGC <input type="number" id="set-mav-port" min="1" max="65535" value="14550" style="width:90px"></label>
+        <label>додаткові QGC
+          <input type="text" id="set-mav-extra" placeholder="100.x.x.x, 100.y.y.y:14550">
+          <button type="button" id="set-mav-extra-useip" class="toggle">Додати мій IP</button>
+        </label>
+        <label>назва <input type="text" id="set-mav-name"></label>
+        <input type="hidden" id="set-mav-connection">
+        <div class="settings-actions">
+          <button type="button" id="mav-restart" class="toggle">Перезапустити MAVLink</button>
+          <span id="mav-restart-status" style="color:var(--dim);font-size:11px"></span>
+        </div>
+      </div>
+    </section>
+
+    <section class="settings-section">
+      <h2>Мотори</h2>
+      <div class="motor-settings">
+        <label><input type="checkbox" id="set-mock"> тестові мотори</label>
+        <label>контроль сек <input type="number" id="set-watchdog" min="0.1" max="5" step="0.1"></label>
+        <label>драйвер <select id="set-motor-type"><option value="gpio">GPIO PWM</option><option value="vesc">VESC USB</option></select></label>
+        <label>VESC USB <input type="text" id="set-vesc-port" placeholder="/dev/ttyACM0"></label>
+        <label>CAN лівий <input type="number" id="set-vesc-left-can" min="0" max="255" placeholder="порожньо = local"></label>
+        <label>CAN правий <input type="number" id="set-vesc-right-can" min="0" max="255" placeholder="68"></label>
+        <label>режим <select id="set-vesc-mode"><option value="current">струм</option><option value="duty">duty</option></select></label>
+        <label>max A <input type="number" id="set-vesc-current" min="0" max="200" step="1"></label>
+        <label>гальмо A <input type="number" id="set-vesc-brake-current" min="0" max="80" step="1"></label>
+        <label>нейтраль <input type="number" id="set-vesc-neutral-deadzone" min="0" max="0.3" step="0.01"></label>
+        <label>baud <input type="number" id="set-vesc-baud" min="9600" max="230400" step="9600"></label>
+        <label>max duty <input type="number" id="set-vesc-duty" min="0" max="1" step="0.01"></label>
+        <label><input type="checkbox" id="set-vesc-left-invert"> лівий invert</label>
+        <label><input type="checkbox" id="set-vesc-right-invert"> правий invert</label>
+        <label>лівий IN1 <input type="number" data-pin="left_in1" min="0" max="40"></label>
+        <label>лівий IN2 <input type="number" data-pin="left_in2" min="0" max="40"></label>
+        <label>лівий PWM <input type="number" data-pin="left_en" min="0" max="40"></label>
+        <label>правий IN1 <input type="number" data-pin="right_in1" min="0" max="40"></label>
+        <label>правий IN2 <input type="number" data-pin="right_in2" min="0" max="40"></label>
+        <label>правий PWM <input type="number" data-pin="right_en" min="0" max="40"></label>
+      </div>
+    </section>
+
+    <div class="settings-actions">
+      <button type="submit" class="toggle primary">Зберегти</button>
+      <button type="button" id="reboot-pi" class="toggle">Перезапустити Pi</button>
+      <button type="button" id="poweroff-pi" class="danger">Вимкнути Pi</button>
+      <span id="settings-status"></span>
+    </div>
+  </form>
+</aside>
+
+<script src="/static/joystick.js"></script>
+<script src="/static/app.js?v=20260522-video-profile-1"></script>
+</body>
+</html>

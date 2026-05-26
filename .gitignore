@@ -1,0 +1,53 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Node ---
+node_modules/
+npm-debug.log*
+.npm
+
+# --- Editors / OS ---
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Runtime state на Pi (НЕ комітити, генерується сервісом) ---
+config/sensor_state.json
+config/control_state.json
+config/rc_state.json
+config/sensor_command.json
+config/compass_calibration.json
+
+# --- Активні налаштування з секретами (паролі камер, WiFi) ---
+# settings.json не комітимо, шаблон settings.current.example.json ОК.
+config/settings.json
+
+# --- Логи / тимчасові ---
+*.log
+*.tmp
+*.bak
+
+# --- Build artifacts ---
+build/
+*.tar.gz
+*.zip
+
+# --- Локальні скрипти/тести користувача ---
+local/
+sandbox/
+scratch/

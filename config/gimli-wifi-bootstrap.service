@@ -1,0 +1,13 @@
+[Unit]
+Description=Gimli Rover early Wi-Fi/bootstrap AP
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/gimli-network-fallback boot
+TimeoutStartSec=75
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

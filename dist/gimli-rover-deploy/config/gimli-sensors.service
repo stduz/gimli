@@ -1,0 +1,15 @@
+[Unit]
+Description=Gimli Rover GPS and compass sensors
+
+[Service]
+Type=simple
+User=gimli1mb
+WorkingDirectory=/opt/gimli
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/gimli/.venv/bin/python -m backend.sensors
+Restart=on-failure
+RestartSec=2
+SupplementaryGroups=dialout i2c
+
+[Install]
+WantedBy=multi-user.target

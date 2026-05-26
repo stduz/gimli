@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Gimli Rover cleanup every five minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Unit=gimli-cleanup.service
+
+[Install]
+WantedBy=timers.target

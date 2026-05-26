@@ -1,0 +1,91 @@
+{
+  "cameras": {
+    "cam1": {
+      "label": "передня",
+      "enabled": true,
+      "host": "192.168.1.108",
+      "username": "admin",
+      "password": "CHANGE_ME_camera_password",
+      "main_path": "/cam/realmonitor?channel=1&subtype=0",
+      "sub_path": "/cam/realmonitor?channel=1&subtype=1",
+      "preferred": "main"
+    },
+    "cam2": {
+      "label": "задня",
+      "enabled": true,
+      "host": "192.168.1.109",
+      "username": "admin",
+      "password": "CHANGE_ME_camera_password",
+      "main_path": "/cam/realmonitor?channel=1&subtype=0",
+      "sub_path": "/cam/realmonitor?channel=1&subtype=1",
+      "preferred": "main"
+    }
+  },
+  "mavlink": {
+    "enabled": true,
+    "system_id": 1,
+    "component_id": 1,
+    "connection": "udpout:127.0.0.1:14550",
+    "extra_connections": [
+      "udpout:127.0.0.1:14550",
+      "udpout:127.0.0.1:14550"
+    ],
+    "vehicle_name": "Gimli Rover 1"
+  },
+  "video": {
+    "stream_host": "",
+    "stream_port": 8554,
+    "active_stream": "cam1"
+  },
+  "power": {
+    "current_sensor": {
+      "enabled": true,
+      "type": "ina228",
+      "bus": "/dev/i2c-1",
+      "address": "0x45",
+      "shunt_ohms": 0.001,
+      "current_lsb_a": 0.001
+    }
+  },
+  "navigation": {
+    "source": "auto",
+    "gps_enabled": true,
+    "gps_trust": "auto",
+    "heading_offset_deg": 191.85,
+    "heading_smoothing": 0.25,
+    "compass_x_axis": "-y",
+    "compass_y_axis": "x",
+    "compass_z_axis": "-z"
+  },
+  "motors": {
+    "type": "vesc",
+    "mock": false,
+    "watchdog_timeout_s": 0.5,
+    "vesc": {
+      "port": "/dev/ttyACM0",
+      "left_port": "/dev/ttyACM0",
+      "right_port": "",
+      "left_can_id": 68,
+      "right_can_id": null,
+      "baud": 115200,
+      "max_duty": 0.08,
+      "control_mode": "current",
+      "max_current_a": 12.0,
+      "left_invert": false,
+      "right_invert": false
+    }
+  },
+  "rc_input": {
+    "enabled": true,
+    "mode": "serial",
+    "mix_mode": "tracks",
+    "serial_port": "/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0",
+    "baud": 115200,
+    "min_us": 1000,
+    "center_us": 1500,
+    "max_us": 2000,
+    "deadzone": 0.06,
+    "throttle_invert": false,
+    "steering_invert": false,
+    "send_hz": 25,
+    "sign

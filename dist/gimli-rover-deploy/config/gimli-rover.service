@@ -1,0 +1,19 @@
+[Unit]
+Description=Gimli Rover backend (FastAPI control + UI)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=gimli1mb
+WorkingDirectory=/opt/gimli
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/gimli/.venv/bin/uvicorn backend.main:app --host 0.0.0.0 --port 8080
+Restart=on-failure
+RestartSec=2
+
+# доступ к GPIO без sudo: пользователь gimli1mb должен быть в группе gpio
+SupplementaryGroups=gpio dialout
+
+[Install]
+WantedBy=multi-user.target

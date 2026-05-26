@@ -1,0 +1,33 @@
+# go2rtc — RTSP → WebRTC мост для двух камер Uniview IPC2124LE.
+#
+# 1. Замени IP, логин, пароль камер ниже.
+# 2. У Uniview RTSP-путь обычно:
+#       main:  rtsp://USER:PASS@IP:554/media/video1
+#       sub :  rtsp://USER:PASS@IP:554/media/video2
+#    Если не работает — проверь через VLC: rtsp://USER:PASS@IP:554/Streaming/Channels/101
+#
+# 3. Запуск:  go2rtc -c /opt/gimli/config/go2rtc.yaml
+# 4. Веб-UI:  http://<pi-ip>:1984/    — там же можно проверить потоки
+
+api:
+  listen: ":1984"
+
+webrtc:
+  listen: ":8555/tcp"    # один TCP-порт для ICE — удобно для VPN/CGNAT
+  candidates:
+    - stun:8555          # автоопределение IP
+
+streams:
+  # ---- ПЕРЕДНЯЯ КАМЕРА ----
+  cam1:
+    - rtsp://admin:CHANGE_ME@192.168.1.108:554/media/video1
+    # fallback на sub-stream если main отвалится:
+    - rtsp://admin:CHANGE_ME@192.168.1.108:554/media/video2
+
+  # ---- ЗАДНЯЯ КАМЕРА ----
+  cam2:
+    - rtsp://admin:CHANGE_ME@192.168.1.109:554/media/video1
+    - rtsp://admin:CHANGE_ME@192.168.1.109:554/media/video2
+
+log:
+  level: info

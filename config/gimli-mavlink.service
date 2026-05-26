@@ -1,0 +1,20 @@
+[Unit]
+Description=Gimli Rover MAVLink bridge for QGroundControl
+After=network-online.target gimli-rover.service gimli-sensors.service
+Wants=network-online.target gimli-rover.service gimli-sensors.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=notify
+User=gimli1mb
+WorkingDirectory=/opt/gimli
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/gimli/.venv/bin/python -m backend.mavlink_bridge
+RuntimeDirectory=gimli
+RuntimeDirectoryMode=0755
+Restart=always
+RestartSec=2
+WatchdogSec=30s
+
+[Install]
+WantedBy=multi-user.target

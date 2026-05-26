@@ -1,0 +1,6 @@
+[Unit]
+Description=Gimli Rover cleanup for logs and stale video workers
+
+[Service]
+Type=oneshot
+ExecStart=/opt/gimli/scripts/gimli-cleanup.sh
