@@ -33,6 +33,9 @@ class VescDrive:
         self._max_duty = _clamp(float(cfg.get("max_duty", 0.12) or 0.12), 0.0, 1.0)
         self._current_mode = str(cfg.get("control_mode", "current") or "current").strip().lower()
         self._max_current_a = max(0.0, float(cfg.get("max_current_a", 20.0) or 20.0))
+        self._start_current_a = max(0.0, float(cfg.get("start_current_a", 0.0) or 0.0))
+        self._current_expo = _clamp(float(cfg.get("current_expo", 1.0) or 1.0), 0.2, 8.0)
+        self._command_ramp_per_s = max(0.0, float(cfg.get("command_ramp_per_s", 0.0) or 0.0))
         self._brake_current_a = max(0.0, float(cfg.get("failsafe_brake_current_a", 12.0) or 12.0))
         self._neutral_deadzone = _clamp(float(cfg.get("neutral_deadzone", 0.06) or 0.06), 0.0, 0.3)
         self._max_rpm = max(0.0, float(cfg.get("max_rpm", 3000.0) or 3000.0))
@@ -56,6 +59,7 @@ class VescDrive:
             throttle = 0.0
         if abs(steering) < self._neutral_deadzone:
             steering = 0.0
+        throttle, steering = self._ramp_command(throttle, steering)
         left = throttle + steering
         right = throttle - steering
         peak = max(abs(left), abs(right), 1.0)
@@ -118,11 +122,31 @@ class VescDrive:
             rpm = int(value * max(0.0, float(getattr(self, "_max_rpm", 3000.0))))
             payload = _set_rpm_payload(rpm)
         else:
-            payload = _set_current_payload(value * self._max_current_a)
+            payload = _set_current_payload(self._shape_current(value))
         if can_id is None:
             self._serial.send_payload(payload)
         else:
             self._serial.forward_can(can_id, payload)
+
+    def _shape_current(self, value: float) -> float:
+        sign = 1.0 if value >= 0 else -1.0
+        amount = _clamp(abs(value), 0.0, 1.0)
+        if amount <= 0.0 or self._max_current_a <= 0.0:
+            return 0.0
+        start = min(self._start_current_a, self._max_current_a)
+        shaped = amount ** self._current_expo
+        return sign * (start + shaped * (self._max_current_a - start))
+
+    def _ramp_command(self, throttle: float, steering: float) -> tuple[float, float]:
+        if self._command_ramp_per_s <= 0.0:
+            return throttle, steering
+        now = time.time()
+        prev_ts = self.state.last_update_ts or now
+        step = min(1.0, max(0.0, now - prev_ts) * self._command_ramp_per_s)
+        return (
+            _move_towards(self.state.throttle, throttle, step),
+            _move_towards(self.state.steering, steering, step),
+        )
 
     def _watchdog_loop(self) -> None:
         while not self._stop_event.is_set():
@@ -252,3 +276,11 @@ def _crc16_xmodem(data: bytes) -> int:
 
 def _clamp(v: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, v))
+
+
+def _move_towards(current: float, target: float, step: float) -> float:
+    if current < target:
+        return min(target, current + step)
+    if current > target:
+        return max(target, current - step)
+    return target

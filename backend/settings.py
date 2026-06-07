@@ -81,6 +81,14 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "connection": "udpout:127.0.0.1:14550",
         "extra_connections": [],
         "vehicle_name": "Gimli Rover 1",
+        "control": {
+            "throttle_axis": "y",
+            "steering_axis": "x",
+            "throttle_invert": False,
+            "steering_invert": False,
+            "throttle_scale": 1.0,
+            "steering_scale": 1.0,
+        },
     },
     "video": {
         "stream_host": "",
@@ -137,6 +145,10 @@ DEFAULT_SETTINGS: dict[str, Any] = {
             "max_duty": 0.12,
             "control_mode": "current",
             "max_current_a": 20.0,
+            "max_rpm": 1200.0,
+            "start_current_a": 0.0,
+            "current_expo": 1.0,
+            "command_ramp_per_s": 0.0,
             "failsafe_brake_current_a": 12.0,
             "neutral_deadzone": 0.06,
             "left_invert": False,
@@ -334,6 +346,7 @@ def write_go2rtc_config(settings: dict[str, Any] | None = None) -> None:
     active_cam = settings.get("cameras", {}).get(active_stream)
     if active_cam and active_cam.get("enabled", True):
         active_urls = _camera_urls(active_cam, settings)
+        active_audio_urls = _camera_urls(active_cam, settings, media="audio")
         lines.append("  active:")
         if active_urls:
             for url in active_urls:
@@ -343,7 +356,14 @@ def write_go2rtc_config(settings: dict[str, Any] | None = None) -> None:
         lines.append("")
         lines.append("  qgc:")
         if active_urls:
-            lines.append(f"    - ffmpeg:{active_urls[0]}#video=copy")
+            lines.append(f"    - {active_urls[0]}")
+        else:
+            lines.append("    - ffmpeg:blank")
+        lines.append("")
+        lines.append("  active_audio:")
+        if active_audio_urls:
+            for url in active_audio_urls:
+                lines.append(f"    - {url}")
         else:
             lines.append("    - ffmpeg:blank")
         lines.append("")
@@ -594,6 +614,13 @@ def _normalize_settings(incoming: dict[str, Any], current: dict[str, Any]) -> di
     mavlink["connection"] = str(mavlink.get("connection", DEFAULT_SETTINGS["mavlink"]["connection"])).strip()
     mavlink["extra_connections"] = _normalize_connections(mavlink.get("extra_connections", []))
     mavlink["vehicle_name"] = str(mavlink.get("vehicle_name", "Gimli Rover")).strip()
+    mav_control = mavlink.setdefault("control", deepcopy(DEFAULT_SETTINGS["mavlink"]["control"]))
+    mav_control["throttle_axis"] = _choice(mav_control.get("throttle_axis", "y"), {"x", "y", "z", "r"}, "y")
+    mav_control["steering_axis"] = _choice(mav_control.get("steering_axis", "x"), {"x", "y", "z", "r"}, "x")
+    mav_control["throttle_invert"] = bool(mav_control.get("throttle_invert", False))
+    mav_control["steering_invert"] = bool(mav_control.get("steering_invert", False))
+    mav_control["throttle_scale"] = max(0.0, min(1.0, float(mav_control.get("throttle_scale", 1.0) or 1.0)))
+    mav_control["steering_scale"] = max(0.0, min(1.0, float(mav_control.get("steering_scale", 1.0) or 1.0)))
 
     video = settings.setdefault("video", deepcopy(DEFAULT_SETTINGS["video"]))
     video["stream_host"] = str(video.get("stream_host", "")).strip()
@@ -613,8 +640,12 @@ def _normalize_settings(incoming: dict[str, Any], current: dict[str, Any]) -> di
     vesc["right_can_id"] = _optional_int(vesc.get("right_can_id"))
     vesc["baud"] = int(vesc.get("baud", 115200) or 115200)
     vesc["max_duty"] = max(0.0, min(1.0, float(vesc.get("max_duty", 0.12) or 0.12)))
-    vesc["control_mode"] = _choice(vesc.get("control_mode", "current"), {"current", "duty"}, "current")
+    vesc["control_mode"] = _choice(vesc.get("control_mode", "current"), {"current", "duty", "rpm"}, "current")
     vesc["max_current_a"] = max(0.0, float(vesc.get("max_current_a", 20.0) or 20.0))
+    vesc["max_rpm"] = max(0.0, float(vesc.get("max_rpm", 1200.0) or 1200.0))
+    vesc["start_current_a"] = max(0.0, min(vesc["max_current_a"], float(vesc.get("start_current_a", 0.0) or 0.0)))
+    vesc["current_expo"] = max(0.2, min(8.0, float(vesc.get("current_expo", 1.0) or 1.0)))
+    vesc["command_ramp_per_s"] = max(0.0, min(10.0, float(vesc.get("command_ramp_per_s", 0.0) or 0.0)))
     vesc["failsafe_brake_current_a"] = max(0.0, min(80.0, float(vesc.get("failsafe_brake_current_a", 12.0) or 12.0)))
     vesc["neutral_deadzone"] = max(0.0, min(0.3, float(vesc.get("neutral_deadzone", 0.06) or 0.06)))
     vesc["left_invert"] = bool(vesc.get("left_invert", False))
@@ -643,7 +674,7 @@ def _normalize_settings(incoming: dict[str, Any], current: dict[str, Any]) -> di
     return settings
 
 
-def _camera_urls(cam: dict[str, Any], settings: dict[str, Any]) -> list[str]:
+def _camera_urls(cam: dict[str, Any], settings: dict[str, Any], media: str = "video") -> list[str]:
     host = str(cam.get("host", "")).strip()
     if not host:
         return []
@@ -654,22 +685,12 @@ def _camera_urls(cam: dict[str, Any], settings: dict[str, Any]) -> list[str]:
     main = _clean_path(cam.get("main_path", ""))
     sub = _clean_path(cam.get("sub_path", ""))
     preferred = _effective_preferred(cam, settings)
-    if preferred == "sub":
-        paths = [sub, main]
-    elif preferred == "main":
-        paths = [main, sub]
-    else:
-        paths = [main, sub]
-    return [base + path for path in paths if path]
+    paths = [sub] if preferred == "sub" else [main]
+    suffix = "#media=audio#backchannel=0" if media == "audio" else "#media=video#backchannel=0"
+    return [base + path + suffix for path in paths if path]
 
 
 def _effective_preferred(cam: dict[str, Any], settings: dict[str, Any]) -> str:
-    profile = settings.get("network", {}).get("profile", "balanced")
-    target_kbps = int(settings.get("network", {}).get("target_kbps", 1800) or 1800)
-    if profile == "low" or target_kbps <= 1500:
-        return "sub"
-    if profile == "high":
-        return "main"
     return _choice(cam.get("preferred", "main"), {"main", "sub", "auto"}, "main")
 
 

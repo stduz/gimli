@@ -1,4 +1,4 @@
-/* Головний скрипт: WebSocket -> бекенд, WebRTC -> go2rtc, джойстик/TX12 -> команди. */
+/* Settings/telemetry panel for the rover. Video and web driving stay disabled here. */
 
 (function () {
   const $ = (id) => document.getElementById(id);
@@ -6,16 +6,16 @@
 
   async function requestPiReboot(status) {
     if (rebootRequestInFlight) return;
-    const yes = window.confirm("Перезапустити Raspberry Pi? Веб-інтерфейс зникне на 1-2 хвилини.");
+    const yes = window.confirm("������������� Raspberry Pi? ���-��������� ������ �� 1-2 �������.");
     if (!yes) return;
     rebootRequestInFlight = true;
-    if (status) status.textContent = "надсилаю перезапуск...";
+    if (status) status.textContent = "�������� ����������...";
     try {
       const resp = await fetch("/api/system/reboot", { method: "POST", cache: "no-store" });
       const data = await resp.json();
-      if (status) status.textContent = data.ok ? "Pi перезапускається..." : "перезапуск не вдався";
+      if (status) status.textContent = data.ok ? "Pi ���������������..." : "���������� �� ������";
     } catch (e) {
-      if (status) status.textContent = "Pi перезапускається...";
+      if (status) status.textContent = "Pi ���������������...";
     }
   }
 
@@ -27,7 +27,7 @@
     requestPiReboot($("settings-status"));
   }, true);
 
-  // ---- WebSocket до бекенду --------------------------------------------------
+  // ---- WebSocket �� ������� --------------------------------------------------
   const wsUrl = (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws/control";
   let ws = null;
   let lastSentAt = 0;
@@ -43,24 +43,24 @@
       try {
         const data = JSON.parse(ev.data);
         if (data && data.state) updateReadout(data.state);
-        const latency = (performance.now() - lastSentAt).toFixed(0) + " мс";
-        $("latency").textContent = latency;
-        $("osd-latency").textContent = latency;
+        const latency = (performance.now() - lastSentAt).toFixed(0) + " ��";
+        setText("latency", latency);
+        setText("osd-latency", latency);
       } catch (e) {}
     };
   }
   function setWsState(connected) {
     const dot = $("ws-dot"), txt = $("ws-text");
-    dot.classList.toggle("on", connected);
-    dot.classList.toggle("off", !connected);
-    txt.textContent = connected ? "зв'язок є" : "нема зв'язку";
-    $("osd-link").textContent = connected ? "онлайн" : "офлайн";
+    dot?.classList.toggle("on", connected);
+    dot?.classList.toggle("off", !connected);
+    if (txt) txt.textContent = connected ? "��'���� �" : "���� ��'����";
+    setText("osd-link", connected ? "������" : "������");
   }
   function updateReadout(s) {
-    $("r-throttle").textContent = (+s.throttle || 0).toFixed(2);
-    $("r-steering").textContent = (+s.steering || 0).toFixed(2);
-    $("r-left").textContent = (+s.left || 0).toFixed(2);
-    $("r-right").textContent = (+s.right || 0).toFixed(2);
+    setText("r-throttle", (+s.throttle || 0).toFixed(2));
+    setText("r-steering", (+s.steering || 0).toFixed(2));
+    setText("r-left", (+s.left || 0).toFixed(2));
+    setText("r-right", (+s.right || 0).toFixed(2));
   }
   function webControlEnabled() {
     const el = $("cfg-tx12-enabled");
@@ -75,37 +75,22 @@
     ws.send(JSON.stringify(msg));
   }
 
-  // ---- джойстик/TX12 → команды (с heartbeat) ---------------------------------
+  // ---- Web driving is intentionally disabled on this page ---------------------
   let current = { throttle: 0, steering: 0, active: false };
-  setInterval(() => {
-    if (current.active) send({ cmd: "drive", throttle: current.throttle, steering: current.steering });
-  }, 100);
 
-  const j = new Joystick($("joystick"), $("joy-knob"),
-    ({ throttle, steering }) => {
-      current = { throttle, steering, active: true };
-      send({ cmd: "drive", throttle, steering });
-    },
-    () => {
-      current = { throttle: 0, steering: 0, active: false };
-      send({ cmd: "drive", throttle: 0, steering: 0 });
-    },
-  );
-
-  // E-STOP (кнопка + пробіл)
-  $("estop").addEventListener("click", () => send({ cmd: "stop" }));
+  // E-STOP (������ + �����)
+  $("estop")?.addEventListener("click", () => send({ cmd: "stop" }));
   window.addEventListener("keydown", (e) => {
     if (e.key === " " || e.code === "Space") send({ cmd: "stop" });
   });
 
-  setupTx12Panel(j);
   setupSettingsPanel();
-  setupCameraSwitcher();
-  setupAudio();
   setupCameraControls();
   setupCompassCalibration();
   startTelemetry();
-  connectWs();
+  setWsState(false);
+  setText("ws-text", "��������� Pi");
+  setText("latency", "HTTP");
 
   // ---- Compass calibration --------------------------------------------------
   function setupCompassCalibration() {
@@ -124,13 +109,13 @@
     let pollTimer = null;
     let lastActive = false;
 
-    const fmtAxis = (v) => Array.isArray(v) ? v.map((x) => Number(x || 0).toFixed(0)).join(" / ") : "—";
+    const fmtAxis = (v) => Array.isArray(v) ? v.map((x) => Number(x || 0).toFixed(0)).join(" / ") : "�";
     const setTone = (el, quality) => {
       if (!el) return;
       el.classList.remove("ok", "warn", "bad");
       if (!quality) return;
-      if (String(quality).includes("добре")) el.classList.add("ok");
-      else if (String(quality).includes("погано") || String(quality).includes("метал")) el.classList.add("bad");
+      if (String(quality).includes("�����")) el.classList.add("ok");
+      else if (String(quality).includes("������") || String(quality).includes("�����")) el.classList.add("bad");
       else el.classList.add("warn");
     };
 
@@ -138,12 +123,12 @@
       try {
         const r = await fetch(path, { method: "POST" });
         const j = await r.json();
-        const text = j.message || (j.ok ? "команду прийнято" : String(r.status));
+        const text = j.message || (j.ok ? "������� ��������" : String(r.status));
         if (messageEl) messageEl.textContent = text;
-        status.textContent = j.ok ? text : "помилка: " + text;
-        if (!j.ok) setTone(messageEl, "погано");
+        status.textContent = j.ok ? text : "�������: " + text;
+        if (!j.ok) setTone(messageEl, "������");
       } catch (e) {
-        status.textContent = "збій: " + e;
+        status.textContent = "���: " + e;
         if (messageEl) messageEl.textContent = String(e);
       }
     }
@@ -154,24 +139,24 @@
         const s = await r.json();
         const active = !!s.active;
         const progress = Number(s.progress || 0);
-        const st = s.status || "—";
+        const st = s.status || "�";
         const samples = s.samples != null ? `, samples=${s.samples}` : "";
         status.textContent = `${st}  ${progress}%${samples}`;
         if (qualityEl) {
-          qualityEl.textContent = s.quality || (st === "success" ? `fitness ${s.fitness || "—"}` : "—");
+          qualityEl.textContent = s.quality || (st === "success" ? `fitness ${s.fitness || "�"}` : "�");
           setTone(qualityEl, qualityEl.textContent);
         }
         if (rawEl) rawEl.textContent = fmtAxis(s.raw);
         if (rangesEl) rangesEl.textContent = fmtAxis(s.ranges);
         if (minmaxEl) {
-          const mn = Array.isArray(s.min) ? fmtAxis(s.min) : "—";
-          const mx = Array.isArray(s.max) ? fmtAxis(s.max) : "—";
+          const mn = Array.isArray(s.min) ? fmtAxis(s.min) : "�";
+          const mx = Array.isArray(s.max) ? fmtAxis(s.max) : "�";
           minmaxEl.textContent = `${mn} / ${mx}`;
         }
         if (warningsEl) {
           const warnings = Array.isArray(s.warnings) ? s.warnings.filter(Boolean) : [];
-          warningsEl.textContent = warnings.length ? warnings.join(" ") : "—";
-          setTone(warningsEl, warnings.length ? "погано" : "добре");
+          warningsEl.textContent = warnings.length ? warnings.join(" ") : "�";
+          setTone(warningsEl, warnings.length ? "������" : "�����");
         }
         btnAccept.disabled = !(st === "success" || (!active && progress >= 100));
         btnCancel.disabled = !active;
@@ -185,7 +170,7 @@
           }
         }
       } catch (e) {
-        status.textContent = "статус недоступний";
+        status.textContent = "������ �����������";
       }
     }
 
@@ -210,133 +195,27 @@
       $("set-compass-y").value = "-y";
       $("set-compass-z").value = "-z";
       $("set-heading-offset").value = 0;
-      if (messageEl) messageEl.textContent = "Виставлено Matek M10Q: X=+X, Y=-Y, Z=-Z, зсув=0. Натисни «Зберегти».";
+      if (messageEl) messageEl.textContent = "���������� Matek M10Q: X=+X, Y=-Y, Z=-Z, ����=0. ������� ���������.";
     });
     presetRotated?.addEventListener("click", () => {
       $("set-compass-x").value = "y";
       $("set-compass-y").value = "-x";
       $("set-compass-z").value = "-z";
       $("set-heading-offset").value = 0;
-      if (messageEl) messageEl.textContent = "Виставлено Matek 90°: X=+Y, Y=-X, Z=-Z, зсув=0. Натисни «Зберегти».";
+      if (messageEl) messageEl.textContent = "���������� Matek 90�: X=+Y, Y=-X, Z=-Z, ����=0. ������� ���������.";
     });
 
     refresh();
-    setInterval(refresh, 3000); // тихий пинг чтоб поймать стейт после reload
+    setInterval(refresh, 3000); // ����� ���� ���� ������� ����� ����� reload
   }
 
-  // ---- TX12 calibration panel -----------------------------------------------
-  function setupTx12Panel(joystick) {
-    const panel = $("tx12-panel");
-    const idEl = $("tx12-id");
-    const axesEl = $("tx12-axes");
-    const btnsEl = $("tx12-buttons");
-    const rTx12 = $("r-tx12");
-
-    $("tx12-toggle").addEventListener("click", () => panel.classList.toggle("hidden"));
-    $("tx12-close").addEventListener("click", () => panel.classList.add("hidden"));
-
-    const cfg = joystick.getTx12Config();
-    const enabledEl = $("cfg-tx12-enabled");
-    const thrAxis = $("cfg-thr-axis"), strAxis = $("cfg-str-axis");
-    for (let i = 0; i < 8; i++) {
-      thrAxis.appendChild(new Option("axes[" + i + "]", String(i)));
-      strAxis.appendChild(new Option("axes[" + i + "]", String(i)));
-    }
-    thrAxis.value = String(cfg.throttleAxis);
-    strAxis.value = String(cfg.steeringAxis);
-    enabledEl.checked = !!cfg.enabled;
-    $("cfg-thr-inv").checked = cfg.throttleInvert;
-    $("cfg-str-inv").checked = cfg.steeringInvert;
-    $("cfg-arm-btn").value = cfg.armButton;
-    $("cfg-arm-req").checked = cfg.armRequired;
-    $("cfg-estop-btn").value = cfg.estopButton;
-    $("cfg-dz").value = cfg.deadzone;
-
-    const apply = () => {
-      const wasEnabled = joystick.getTx12Config().enabled;
-      joystick.setTx12Config({
-        enabled: enabledEl.checked,
-        throttleAxis: parseInt(thrAxis.value, 10),
-        throttleInvert: $("cfg-thr-inv").checked,
-        steeringAxis: parseInt(strAxis.value, 10),
-        steeringInvert: $("cfg-str-inv").checked,
-        armButton: parseInt($("cfg-arm-btn").value, 10) || 0,
-        armRequired: $("cfg-arm-req").checked,
-        estopButton: parseInt($("cfg-estop-btn").value, 10) || 0,
-        deadzone: parseFloat($("cfg-dz").value) || 0,
-      });
-      if (wasEnabled && !enabledEl.checked) {
-        current = { throttle: 0, steering: 0, active: false };
-        if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ cmd: "stop" }));
-      }
-    };
-    ["cfg-tx12-enabled", "cfg-thr-axis", "cfg-str-axis", "cfg-thr-inv", "cfg-str-inv",
-     "cfg-arm-btn", "cfg-arm-req", "cfg-estop-btn", "cfg-dz"]
-      .forEach((id) => $(id).addEventListener("change", apply));
-
-    joystick.onTx12Frame((s) => {
-      if (!joystick.getTx12Config().enabled) {
-        idEl.textContent = "веб-керування вимкнено";
-        rTx12.textContent = "вимк.";
-        return;
-      }
-      if (!s.connected) {
-        idEl.textContent = "не підключено (натисни будь-яку кнопку на TX12 — браузер побачить)";
-        rTx12.textContent = "—";
-        return;
-      }
-      idEl.textContent = s.id || "";
-      rTx12.textContent = "підключено";
-
-      if (axesEl.children.length !== s.axes.length) {
-        axesEl.innerHTML = "";
-        for (let i = 0; i < s.axes.length; i++) {
-          const row = document.createElement("div");
-          row.className = "tx12-axis-row";
-          row.innerHTML =
-            '<span class="lbl">' + i + '</span>' +
-            '<span class="tx12-bar"><span class="fill"></span></span>' +
-            '<span class="val">0.00</span>';
-          axesEl.appendChild(row);
-        }
-      }
-      s.axes.forEach((v, i) => {
-        const row = axesEl.children[i]; if (!row) return;
-        const fill = row.querySelector(".fill");
-        const val = row.querySelector(".val");
-        const pct = Math.abs(v) * 50;
-        if (v >= 0) { fill.style.left = "50%"; fill.style.width = pct + "%"; }
-        else        { fill.style.left = (50 - pct) + "%"; fill.style.width = pct + "%"; }
-        val.textContent = v.toFixed(2);
-      });
-
-      if (btnsEl.children.length !== s.buttons.length) {
-        btnsEl.innerHTML = "";
-        for (let i = 0; i < s.buttons.length; i++) {
-          const b = document.createElement("span");
-          b.className = "tx12-btn";
-          b.textContent = i;
-          btnsEl.appendChild(b);
-        }
-      }
-      s.buttons.forEach((pressed, i) => {
-        btnsEl.children[i].classList.toggle("on", pressed);
-      });
-    });
-  }
-
-  // ---- Панель налаштувань ---------------------------------------------------
+  // ---- ������ ����������� ---------------------------------------------------
   function setupSettingsPanel() {
     const panel = $("settings-panel");
     const form = $("settings-form");
     const status = $("settings-status");
     let current = null;
 
-    $("settings-toggle").addEventListener("click", async () => {
-      panel.classList.toggle("hidden");
-      if (!panel.classList.contains("hidden")) await loadSettings();
-    });
-    $("settings-close").addEventListener("click", () => panel.classList.add("hidden"));
     $("scan-wifi").addEventListener("click", scanWifi);
     $("connect-wifi").addEventListener("click", connectWifi);
     $("start-setup-ap").addEventListener("click", () => setupAp("start"));
@@ -361,44 +240,48 @@
     });
     $("mav-restart").addEventListener("click", async () => {
       const s = $("mav-restart-status");
-      s.textContent = "перезапускаю...";
+      s.textContent = "������������...";
       try {
         const resp = await fetch("/api/mavlink/restart", { method: "POST" });
         const data = await resp.json();
-        s.textContent = data.ok ? "перезапущено" : ("помилка: " + (data.message || ""));
-      } catch (e) { s.textContent = "помилка: " + e; }
+        s.textContent = data.ok ? "������������" : ("�������: " + (data.message || ""));
+      } catch (e) { s.textContent = "�������: " + e; }
     });
+    $("invert-throttle-axis")?.addEventListener("click", () => toggleCheckbox("set-mav-throttle-invert"));
+    $("invert-steering-axis")?.addEventListener("click", () => toggleCheckbox("set-mav-steering-invert"));
+    $("invert-left-motor")?.addEventListener("click", () => toggleCheckbox("set-vesc-left-invert"));
+    $("invert-right-motor")?.addEventListener("click", () => toggleCheckbox("set-vesc-right-invert"));
 
     $("reboot-pi").addEventListener("click", async () => {
-      const yes = window.confirm("Перезапустити Raspberry Pi? Веб-інтерфейс зникне на 1-2 хвилини.");
+      const yes = window.confirm("������������� Raspberry Pi? ���-��������� ������ �� 1-2 �������.");
       if (!yes) return;
-      status.textContent = "надсилаю перезапуск...";
+      status.textContent = "�������� ����������...";
       try {
         const resp = await fetch("/api/system/reboot", { method: "POST" });
         const data = await resp.json();
-        status.textContent = data.ok ? "Pi перезапускається..." : "перезапуск не вдався";
+        status.textContent = data.ok ? "Pi ���������������..." : "���������� �� ������";
       } catch (e) {
-        status.textContent = "Pi перезапускається...";
+        status.textContent = "Pi ���������������...";
       }
     });
 
     $("poweroff-pi").addEventListener("click", async () => {
-      const yes = window.confirm("Вимкнути Raspberry Pi? Після цього веб-інтерфейс зникне до ручного увімкнення живлення.");
+      const yes = window.confirm("�������� Raspberry Pi? ϳ��� ����� ���-��������� ������ �� ������� ��������� ��������.");
       if (!yes) return;
-      status.textContent = "надсилаю вимкнення...";
+      status.textContent = "�������� ���������...";
       try {
         const resp = await fetch("/api/system/poweroff", { method: "POST" });
         const data = await resp.json();
-        status.textContent = data.ok ? "Pi вимикається..." : "вимкнення не вдалося";
+        status.textContent = data.ok ? "Pi ����������..." : "��������� �� �������";
       } catch (e) {
-        status.textContent = "Pi вимикається...";
+        status.textContent = "Pi ����������...";
       }
     });
 
     const applyVideoProfile = $("apply-video-profile");
     applyVideoProfile?.addEventListener("click", async () => {
       const videoStatus = $("video-profile-status") || status;
-      videoStatus.textContent = "застосовую профіль...";
+      videoStatus.textContent = "���������� ������...";
       try {
         const resp = await fetch("/api/cameras/tune-video", {
           method: "POST",
@@ -410,26 +293,26 @@
         });
         const data = await resp.json();
         const cams = data.results || {};
-        const parts = Object.keys(cams).map((name) => name + ": " + (cams[name].ok ? "ok" : "помилка"));
-        videoStatus.textContent = data.ok ? "застосовано: " + parts.join(", ") : "не вдалося: " + parts.join(", ");
+        const parts = Object.keys(cams).map((name) => name + ": " + (cams[name].ok ? "ok" : "�������"));
+        videoStatus.textContent = data.ok ? "�����������: " + parts.join(", ") : "�� �������: " + parts.join(", ");
         if (data.settings) {
           current = data.settings;
           fillSettings(current);
         }
       } catch (e) {
-        videoStatus.textContent = "помилка: " + e;
+        videoStatus.textContent = "�������: " + e;
       }
     });
 
     async function loadSettings() {
-      status.textContent = "завантажую...";
+      status.textContent = "����������...";
       try {
         const resp = await fetch("/api/settings");
         current = await resp.json();
         fillSettings(current);
         status.textContent = "";
       } catch (e) {
-        status.textContent = "не вдалося завантажити";
+        status.textContent = "�� ������� �����������";
       }
     }
 
@@ -443,33 +326,24 @@
         });
         const pass = root.querySelector('[data-field="password"]');
         pass.value = "";
-        pass.placeholder = cam.password_set ? "збережено; порожньо = не міняти" : "не задано";
+        pass.placeholder = cam.password_set ? "���������; �������� = �� �����" : "�� ������";
+        ensureCameraActions(root, name);
       });
       const network = settings.network || {};
       const power = settings.power || {};
       const nav = settings.navigation || {};
-      const wg = network.wireguard || {};
       const mav = settings.mavlink || {};
       $("set-profile").value = network.profile || "balanced";
       $("set-kbps").value = network.target_kbps || 1800;
       $("set-link-mode").value = network.link_mode || "auto";
       $("set-wifi-ssid").value = network.wifi_ssid || "";
       $("set-wifi-password").value = "";
-      $("set-wifi-password").placeholder = network.wifi_password_set ? "збережено; порожньо = не міняти" : "не задано";
+      $("set-wifi-password").placeholder = network.wifi_password_set ? "���������; �������� = �� �����" : "�� ������";
       const ap = network.setup_ap || {};
       $("set-ap-enabled").checked = ap.enabled !== false;
       $("set-ap-ssid").value = ap.ssid || "Gimli-Rover-Setup";
       $("set-ap-password").value = "";
-      $("set-ap-password").placeholder = ap.password_set ? "збережено; порожньо = не міняти" : "gimli1234";
-      $("set-wg-enabled").checked = !!wg.enabled;
-      $("set-wg-interface").value = wg.interface || "wg0";
-      $("set-wg-address").value = wg.address || "";
-      $("set-wg-private").value = "";
-      $("set-wg-private").placeholder = wg.private_key_set ? "збережено; порожньо = не міняти" : "не задано";
-      $("set-wg-peer-public").value = wg.peer_public_key || "";
-      $("set-wg-endpoint").value = wg.peer_endpoint || "";
-      $("set-wg-allowed").value = wg.allowed_ips || "0.0.0.0/0";
-      $("set-wg-keepalive").value = wg.persistent_keepalive || 25;
+      $("set-ap-password").placeholder = ap.password_set ? "���������; �������� = �� �����" : "gimli1234";
       $("set-voltage").value = power.battery_voltage == null ? "" : power.battery_voltage;
       $("set-low-voltage").value = power.low_voltage || 11.1;
       const currentSensor = power.current_sensor || {};
@@ -509,6 +383,13 @@
       }
       $("set-mav-name").value = mav.vehicle_name || "";
       $("set-mav-extra").value = Array.isArray(mav.extra_connections) ? mav.extra_connections.join(", ") : (mav.extra_connections || "");
+      const mavControl = mav.control || {};
+      $("set-mav-throttle-axis").value = mavControl.throttle_axis || "y";
+      $("set-mav-steering-axis").value = mavControl.steering_axis || "x";
+      $("set-mav-throttle-invert").checked = !!mavControl.throttle_invert;
+      $("set-mav-steering-invert").checked = !!mavControl.steering_invert;
+      $("set-mav-throttle-scale").value = mavControl.throttle_scale == null ? 1 : mavControl.throttle_scale;
+      $("set-mav-steering-scale").value = mavControl.steering_scale == null ? 1 : mavControl.steering_scale;
       const motors = settings.motors || {};
       $("set-mock").checked = !!motors.mock;
       $("set-watchdog").value = motors.watchdog_timeout_s || 0.5;
@@ -519,6 +400,10 @@
       $("set-vesc-right-can").value = vesc.right_can_id ?? "";
       $("set-vesc-mode").value = vesc.control_mode || "current";
       $("set-vesc-current").value = vesc.max_current_a || 20;
+      $("set-vesc-rpm").value = vesc.max_rpm || 1200;
+      $("set-vesc-start-current").value = vesc.start_current_a == null ? 0 : vesc.start_current_a;
+      $("set-vesc-current-expo").value = vesc.current_expo == null ? 1 : vesc.current_expo;
+      $("set-vesc-ramp").value = vesc.command_ramp_per_s == null ? 0 : vesc.command_ramp_per_s;
       $("set-vesc-brake-current").value = vesc.failsafe_brake_current_a == null ? 12 : vesc.failsafe_brake_current_a;
       $("set-vesc-neutral-deadzone").value = vesc.neutral_deadzone == null ? 0.06 : vesc.neutral_deadzone;
       $("set-vesc-baud").value = vesc.baud || 115200;
@@ -553,15 +438,6 @@
       next.network.setup_ap.enabled = $("set-ap-enabled").checked;
       next.network.setup_ap.ssid = $("set-ap-ssid").value.trim() || "Gimli-Rover-Setup";
       next.network.setup_ap.password = $("set-ap-password").value;
-      next.network.wireguard = next.network.wireguard || {};
-      next.network.wireguard.enabled = $("set-wg-enabled").checked;
-      next.network.wireguard.interface = $("set-wg-interface").value.trim() || "wg0";
-      next.network.wireguard.address = $("set-wg-address").value.trim();
-      next.network.wireguard.private_key = $("set-wg-private").value.trim();
-      next.network.wireguard.peer_public_key = $("set-wg-peer-public").value.trim();
-      next.network.wireguard.peer_endpoint = $("set-wg-endpoint").value.trim();
-      next.network.wireguard.allowed_ips = $("set-wg-allowed").value.trim() || "0.0.0.0/0";
-      next.network.wireguard.persistent_keepalive = parseInt($("set-wg-keepalive").value, 10) || 25;
       next.power = next.power || {};
       next.power.battery_voltage = $("set-voltage").value === "" ? null : parseFloat($("set-voltage").value);
       next.power.low_voltage = parseFloat($("set-low-voltage").value) || 11.1;
@@ -603,6 +479,13 @@
         .map((s) => s.trim())
         .filter(Boolean);
       next.mavlink.vehicle_name = $("set-mav-name").value.trim();
+      next.mavlink.control = next.mavlink.control || {};
+      next.mavlink.control.throttle_axis = $("set-mav-throttle-axis").value;
+      next.mavlink.control.steering_axis = $("set-mav-steering-axis").value;
+      next.mavlink.control.throttle_invert = $("set-mav-throttle-invert").checked;
+      next.mavlink.control.steering_invert = $("set-mav-steering-invert").checked;
+      next.mavlink.control.throttle_scale = parseFloat($("set-mav-throttle-scale").value) || 1;
+      next.mavlink.control.steering_scale = parseFloat($("set-mav-steering-scale").value) || 1;
       next.motors = next.motors || {};
       next.motors.type = $("set-motor-type").value;
       next.motors.mock = $("set-mock").checked;
@@ -615,6 +498,10 @@
       next.motors.vesc.right_can_id = $("set-vesc-right-can").value === "" ? null : parseInt($("set-vesc-right-can").value, 10);
       next.motors.vesc.control_mode = $("set-vesc-mode").value;
       next.motors.vesc.max_current_a = parseFloat($("set-vesc-current").value) || 20;
+      next.motors.vesc.max_rpm = parseFloat($("set-vesc-rpm").value) || 1200;
+      next.motors.vesc.start_current_a = parseFloat($("set-vesc-start-current").value) || 0;
+      next.motors.vesc.current_expo = parseFloat($("set-vesc-current-expo").value) || 1;
+      next.motors.vesc.command_ramp_per_s = parseFloat($("set-vesc-ramp").value) || 0;
       next.motors.vesc.failsafe_brake_current_a = parseFloat($("set-vesc-brake-current").value) || 0;
       next.motors.vesc.neutral_deadzone = parseFloat($("set-vesc-neutral-deadzone").value) || 0;
       next.motors.vesc.baud = parseInt($("set-vesc-baud").value, 10) || 115200;
@@ -630,7 +517,7 @@
 
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
-      status.textContent = "зберігаю...";
+      status.textContent = "�������...";
       try {
         const payload = readSettings();
         const resp = await fetch("/api/settings", {
@@ -642,10 +529,10 @@
         if (!resp.ok || data.ok === false) throw new Error(data.message || `HTTP ${resp.status}`);
         current = data.settings;
         fillSettings(current);
-        status.textContent = data.go2rtc_restarted ? "збережено, відеоміст перезапущено" : "збережено; потрібен перезапуск";
+        status.textContent = data.go2rtc_restarted ? "���������, ������� ������������" : "���������; ������� ����������";
         updateTelemetry(data.settings);
       } catch (err) {
-        status.textContent = "не вдалося зберегти: " + (err?.message || err);
+        status.textContent = "�� ������� ��������: " + (err?.message || err);
       }
     });
 
@@ -659,7 +546,7 @@
       current.navigation.source = source;
       current.navigation.gps_trust = trust;
       fillSettings(current);
-      status.textContent = "зберігаю GPS...";
+      status.textContent = "������� GPS...";
       try {
         const resp = await fetch("/api/settings", {
           method: "POST",
@@ -669,9 +556,9 @@
         const data = await resp.json();
         current = data.settings;
         fillSettings(current);
-        status.textContent = source === "off" ? "GPS вимкнено" : "GPS збережено";
+        status.textContent = source === "off" ? "GPS ��������" : "GPS ���������";
       } catch (e) {
-        status.textContent = "GPS не збережено";
+        status.textContent = "GPS �� ���������";
       }
     }
   }
@@ -679,20 +566,20 @@
   async function scanWifi() {
     const status = $("wifi-scan-status");
     const list = $("wifi-networks");
-    status.textContent = "сканую...";
+    status.textContent = "������...";
     list.innerHTML = "";
     try {
       const resp = await fetch("/api/network/wifi-scan");
       const data = await resp.json();
       const networks = data.networks || [];
-      status.textContent = networks.length ? networks.length + " мереж" : "нічого не знайдено";
+      status.textContent = networks.length ? networks.length + " �����" : "����� �� ��������";
       networks.forEach((net) => {
         const item = document.createElement("button");
         item.type = "button";
         item.className = "wifi-network";
         item.innerHTML =
           '<span>' + escapeHtml(net.ssid || "") + '</span>' +
-          '<span>' + (net.signal == null ? "—" : net.signal.toFixed(0) + " dBm") + '</span>' +
+          '<span>' + (net.signal == null ? "�" : net.signal.toFixed(0) + " dBm") + '</span>' +
           '<span>' + (net.security || "open") + '</span>';
         item.addEventListener("click", () => {
           $("set-wifi-ssid").value = net.ssid || "";
@@ -701,7 +588,7 @@
         list.appendChild(item);
       });
     } catch (e) {
-      status.textContent = "сканування не вдалося";
+      status.textContent = "���������� �� �������";
     }
   }
 
@@ -710,12 +597,12 @@
     const ssid = $("set-wifi-ssid").value.trim();
     const password = $("set-wifi-password").value;
     if (!ssid) {
-      status.textContent = "вкажи SSID";
+      status.textContent = "����� SSID";
       return;
     }
-    const yes = window.confirm("Підключитись до Wi-Fi '" + ssid + "'? Зв'язок може зникнути на кілька секунд.");
+    const yes = window.confirm("ϳ���������� �� Wi-Fi '" + ssid + "'? ��'���� ���� �������� �� ����� ������.");
     if (!yes) return;
-    status.textContent = "підключаю...";
+    status.textContent = "��������...";
     try {
       const resp = await fetch("/api/network/wifi-connect", {
         method: "POST",
@@ -723,18 +610,18 @@
         body: JSON.stringify({ ssid, password, interface: "wlan0" }),
       });
       const data = await resp.json();
-      status.textContent = data.ok ? "підключено" : ("помилка: " + (data.message || ""));
+      status.textContent = data.ok ? "���������" : ("�������: " + (data.message || ""));
       setTimeout(loadNetworkStatus, 2000);
     } catch (e) {
-      status.textContent = "команда відправлена; перевір зв'язок";
+      status.textContent = "������� ����������; ������ ��'����";
     }
   }
 
   async function setupAp(action) {
     const status = $("wifi-scan-status");
-    const text = action === "start" ? "Увімкнути setup AP? Поточний Wi-Fi може відключитись." : "Вимкнути setup AP?";
+    const text = action === "start" ? "�������� setup AP? �������� Wi-Fi ���� �����������." : "�������� setup AP?";
     if (!window.confirm(text)) return;
-    status.textContent = action === "start" ? "вмикаю AP..." : "вимикаю AP...";
+    status.textContent = action === "start" ? "������ AP..." : "������� AP...";
     try {
       const resp = await fetch("/api/network/setup-ap", {
         method: "POST",
@@ -742,10 +629,10 @@
         body: JSON.stringify({ action }),
       });
       const data = await resp.json();
-      status.textContent = data.ok ? data.message : ("помилка: " + (data.message || ""));
+      status.textContent = data.ok ? data.message : ("�������: " + (data.message || ""));
       setTimeout(loadNetworkStatus, 2000);
     } catch (e) {
-      status.textContent = "команда відправлена; перевір зв'язок";
+      status.textContent = "������� ����������; ������ ��'����";
     }
   }
 
@@ -757,6 +644,26 @@
       '"': "&quot;",
       "'": "&#39;",
     })[ch]);
+  }
+
+  function toggleCheckbox(id) {
+    const input = $(id);
+    if (!input) return;
+    input.checked = !input.checked;
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  function setText(id, value) {
+    const el = $(id);
+    if (el) el.textContent = value;
+  }
+
+  function setStatusChip(id, value, tone) {
+    const el = $(id);
+    if (!el) return;
+    el.textContent = value;
+    el.classList.toggle("ok", tone === "ok");
+    el.classList.toggle("bad", tone === "bad");
   }
 
   function addMavExtraHost(host) {
@@ -778,17 +685,22 @@
       const resp = await fetch("/api/network/status");
       const data = await resp.json();
       const names = (data.interfaces || []).map((i) => i.ifname).filter(Boolean).join(", ");
-      $("network-status").textContent = names ? "мережа: " + names : "мережа: —";
+      $("network-status").textContent = names ? "������: " + names : "������: �";
     } catch (e) {}
   }
 
   // ---- Telemetry / OSD -------------------------------------------------------
   function startTelemetry() {
     const tick = async () => {
+      const started = performance.now();
       try {
         const resp = await fetch("/api/telemetry");
+        const latencyMs = Math.round(performance.now() - started);
         updateTelemetry(await resp.json());
-      } catch (e) {}
+        setStatusChip("status-latency", String(latencyMs), latencyMs <= 250 ? "ok" : (latencyMs <= 800 ? "" : "bad"));
+      } catch (e) {
+        setStatusChip("status-latency", "OFF", "bad");
+      }
     };
     tick();
     setInterval(tick, 3000);
@@ -798,58 +710,52 @@
     const link = t.link || t.network || {};
     const power = t.power || {};
     const nav = t.navigation || {};
-    const cameras = t.cameras || {};
     const motors = t.motors || {};
     const control = t.control || {};
     const rc = t.rc_input || {};
     const volts = power.battery_voltage;
-    const wg = link.wireguard_enabled ? " / WG" : "";
-    const mav = t.mavlink && t.mavlink.enabled ? " / MAV" + t.mavlink.system_id : "";
-    const armText = control.armed == null ? "—" : (control.armed ? "увімк." : "вимк.");
-    const rcText = rc.ok == null ? "—" : (rc.ok ? "OK" : "LOST");
-    const modeText = control.daynight ? (control.daynight === "night" ? "ніч" : "день") : "—";
-    const buttonsText = control.buttons_hex || "—";
-    $("osd-link").textContent = (link.link_mode || "auto") + " / " + (link.profile || "balanced") + " / " + (link.target_kbps || 0) + " kbps" + wg + mav;
-    $("osd-voltage").textContent = volts == null ? "— V" : Number(volts).toFixed(1) + " V";
-    $("osd-voltage").classList.toggle("bad", volts != null && volts <= (power.low_voltage || 0));
-    $("osd-current").textContent = power.current_a == null ? "— A" : Number(power.current_a).toFixed(2) + " A";
-    $("osd-power").textContent = power.power_w == null ? "— W" : Number(power.power_w).toFixed(1) + " W";
-    $("osd-arm").textContent = armText;
-    $("osd-arm").classList.toggle("bad", control.armed === false);
-    $("osd-rc").textContent = rcText;
-    $("osd-rc").classList.toggle("bad", rc.ok === false);
-    $("osd-daynight").textContent = modeText;
-    $("osd-buttons").textContent = buttonsText;
-    $("top-arm").textContent = armText;
-    $("top-arm").classList.toggle("ok", control.armed === true);
-    $("top-arm").classList.toggle("bad", control.armed === false);
-    $("top-rc").textContent = rcText;
-    $("top-rc").classList.toggle("ok", rc.ok === true);
-    $("top-rc").classList.toggle("bad", rc.ok === false);
-    $("top-daynight").textContent = modeText;
-    $("top-buttons").textContent = buttonsText;
-    $("osd-gps").textContent = gpsText(nav);
-    $("osd-heading").textContent = nav.heading_deg == null ? "—°" : Number(nav.heading_deg).toFixed(0) + "°";
-    $("osd-cam1").textContent = cameraText(cameras.cam1);
-    $("osd-cam2").textContent = cameraText(cameras.cam2);
-    $("osd-motor").textContent = motors.mock ? "тест" : "реальні";
+    const armText = control.armed == null ? "�" : (control.armed ? "����." : "����.");
+    const rcText = rc.ok == null ? "�" : (rc.ok ? "OK" : "LOST");
+    const modeText = control.daynight ? (control.daynight === "night" ? "��" : "����") : "�";
+    const buttonsText = control.buttons_hex || "�";
+    const sats = Number(nav.satellites || 0);
+    setStatusChip("status-sats", sats ? String(sats) : "�", sats >= 8 ? "ok" : (sats > 0 ? "" : "bad"));
+    setStatusChip("status-voltage", volts == null ? "�" : Number(volts).toFixed(1), volts != null && volts <= (power.low_voltage || 0) ? "bad" : "ok");
+    setText("osd-link", (link.link_mode || "auto") + " / " + (link.profile || "balanced") + " / " + (link.target_kbps || 0) + " kbps");
+    setText("osd-voltage", volts == null ? "� V" : Number(volts).toFixed(1) + " V");
+    setText("osd-current", power.current_a == null ? "� A" : Number(power.current_a).toFixed(2) + " A");
+    setText("osd-power", power.power_w == null ? "� W" : Number(power.power_w).toFixed(1) + " W");
+    setText("osd-arm", armText);
+    setText("osd-rc", rcText);
+    setText("osd-daynight", modeText);
+    setText("osd-buttons", buttonsText);
+    setText("top-arm", armText);
+    setText("top-rc", rcText);
+    setText("top-daynight", modeText);
+    setText("top-buttons", buttonsText);
+    setText("osd-gps", gpsText(nav));
+    setText("osd-heading", nav.heading_deg == null ? "��" : Number(nav.heading_deg).toFixed(0) + "�");
+    const vesc = motors.vesc || {};
+    const motorMode = motors.type === "vesc" ? (vesc.control_mode || "current") : (motors.type || "gpio");
+    setText("osd-motor", (motors.mock ? "����" : motorMode) +
+      (motors.type === "vesc" && vesc.max_rpm ? " / " + Number(vesc.max_rpm).toFixed(0) + " rpm" : ""));
     if (t.video && t.video.active_stream) applyActiveCamera(t.video.active_stream, false);
   }
 
   function cameraText(cam) {
-    if (!cam) return "—";
-    if (!cam.enabled) return "вимк.";
+    if (!cam) return "�";
+    if (!cam.enabled) return "����.";
     return (cam.host || "no host") + " / " + (cam.preferred || "main");
   }
 
   function gpsText(nav) {
-    if (!nav || !nav.gps_enabled) return nav && nav.gps_warning ? nav.gps_warning : "вимк.";
+    if (!nav || !nav.gps_enabled) return nav && nav.gps_warning ? nav.gps_warning : "����.";
     const fix = Number(nav.fix_type || 0);
     const sats = Number(nav.satellites || 0);
-    if (fix < 2) return "нема фікса / " + sats + " суп.";
+    if (fix < 2) return "���� ���� / " + sats + " ���.";
     const label = fix >= 3 ? "3D" : "2D";
-    if (nav.latitude == null || nav.longitude == null) return label + " / " + sats + " суп.";
-    return label + " / " + sats + " суп. / " + Number(nav.latitude).toFixed(5) + ", " + Number(nav.longitude).toFixed(5);
+    if (nav.latitude == null || nav.longitude == null) return label + " / " + sats + " ���.";
+    return label + " / " + sats + " ���. / " + Number(nav.latitude).toFixed(5) + ", " + Number(nav.longitude).toFixed(5);
   }
 
   // ---- Video: two proxied MJPEG streams from the backend ---------------------
@@ -946,7 +852,9 @@
   let audioPc = null;
   let audioEl = null;
   let audioEnabled = false;
-  let currentAudioStream = "active";
+  let currentAudioStream = "active_audio";
+  let activeCameraName = "cam1";
+  let audioCameraName = "";
 
   function setupAudio() {
     const btn = $("audio-toggle");
@@ -956,19 +864,20 @@
       audioEnabled = !audioEnabled;
       if (audioEnabled) {
         btn.classList.add("primary");
-        status.textContent = "підключаю звук...";
-        await startAudio(currentAudioStream);
+        status.textContent = "�������� ����...";
+        await startAudio("active_audio");
       } else {
         btn.classList.remove("primary");
         stopAudio();
-        status.textContent = "звук вимк.";
+        status.textContent = "���� ����.";
       }
     });
   }
 
   async function startAudio(streamName) {
     stopAudio();
-    currentAudioStream = streamName || "active";
+    currentAudioStream = streamName || "active_audio";
+    audioCameraName = activeCameraName;
     const status = $("audio-status");
     try {
       audioEl = new Audio();
@@ -990,9 +899,9 @@
       if (!resp.ok) throw new Error(await resp.text());
       const answer = await resp.text();
       await audioPc.setRemoteDescription({ type: "answer", sdp: answer });
-      if (status) status.textContent = "звук: " + currentAudioStream;
+      if (status) status.textContent = "����: " + currentAudioStream;
     } catch (e) {
-      if (status) status.textContent = "звук недоступний";
+      if (status) status.textContent = "���� �����������";
       console.warn("audio:", e);
       stopAudio();
       audioEnabled = false;
@@ -1006,54 +915,84 @@
       try { audioPc.close(); } catch (e) {}
     }
     audioPc = null;
+    audioCameraName = "";
     if (audioEl) {
       try { audioEl.pause(); audioEl.srcObject = null; } catch (e) {}
     }
     audioEl = null;
   }
 
+  function ensureCameraActions(root, camera) {
+    if (!root || root.querySelector("[data-camera-actions]")) return;
+    const actions = document.createElement("div");
+    actions.className = "camera-actions";
+    actions.dataset.cameraActions = "1";
+    actions.innerHTML = `
+      <div class="camera-action-title">${camera === "cam2" ? "����� ������" : "������� ������"}</div>
+      <button type="button" data-light="forceon">ForceOn</button>
+      <button type="button" data-light="manual">Manual</button>
+      <button type="button" data-light="auto">Auto</button>
+      <button type="button" data-light="smart">Smart/AI</button>
+      <button type="button" data-light="forceoff">ForceOff</button>
+      <button type="button" data-light="off">Off</button>
+      <label>����� <input type="range" min="0" max="100" value="80" data-light-level></label>
+      <button type="button" data-daynight="day">����</button>
+      <button type="button" data-daynight="night">ͳ�</button>
+      <button type="button" data-daynight="auto">����/�� ����</button>
+      <button type="button" data-sync-cameras>�����. ���</button>
+      <span data-camera-status></span>
+    `;
+    root.appendChild(actions);
+  }
+
   function setupCameraControls() {
-    document.querySelectorAll(".cam-controls").forEach((root) => {
-      const camera = root.dataset.camera;
-      const level = root.querySelector("[data-light-level]");
-      const status = root.querySelector("[data-camera-status]");
-      root.querySelectorAll("[data-light]").forEach((button) => {
-        button.addEventListener("click", async () => {
-          const mode = button.dataset.light;
-          status.textContent = "надсилаю...";
-          try {
-            const resp = await fetch("/api/camera/" + camera + "/control", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                action: "light",
-                mode,
-                level: parseInt(level.value, 10) || 60,
-              }),
-            });
-            const data = await resp.json();
-            status.textContent = data.ok ? "ок" : "помилка";
-            if (!data.ok && data.message) console.warn("camera control:", data.message);
-          } catch (e) {
-            status.textContent = "нема зв'язку";
-          }
+    document.addEventListener("click", async (event) => {
+      const button = event.target && event.target.closest
+        ? event.target.closest("[data-light], [data-daynight], [data-sync-cameras]")
+        : null;
+      if (!button) return;
+      const root = button.closest("[data-camera]");
+      const status = (root && root.querySelector("[data-camera-status]")) || $("video-profile-status") || $("settings-status");
+      if (status) status.textContent = "��������...";
+      try {
+        if (button.hasAttribute("data-sync-cameras")) {
+          const resp = await fetch("/api/cameras/sync-time", { method: "POST" });
+          const data = await resp.json();
+          if (status) status.textContent = data.ok ? "��� �������������" : "������� ����";
+          return;
+        }
+        const camera = root && root.dataset.camera;
+        const level = root && root.querySelector("[data-light-level]");
+        const body = button.hasAttribute("data-daynight")
+          ? { action: "daynight", mode: button.dataset.daynight }
+          : { action: "light", mode: button.dataset.light, level: parseInt(level?.value, 10) || 80 };
+        const resp = await fetch("/api/camera/" + camera + "/control", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
         });
-      });
+        const data = await resp.json();
+        if (status) status.textContent = data.ok ? "��" : "�������";
+        if (!data.ok && data.message) console.warn("camera control:", data.message);
+      } catch (e) {
+        if (status) status.textContent = "���� ��'����";
+      }
     });
   }
 
   function applyActiveCamera(name, saving) {
     const active = name === "cam2" ? "cam2" : "cam1";
+    activeCameraName = active;
     const inactive = active === "cam1" ? "cam2" : "cam1";
-    $("tile-" + active).classList.add("active");
-    $("tile-" + active).classList.remove("pip");
-    $("tile-" + inactive).classList.add("pip");
-    $("tile-" + inactive).classList.remove("active");
-    $("active-cam1").classList.toggle("primary", active === "cam1");
-    $("active-cam2").classList.toggle("primary", active === "cam2");
-    const label = active === "cam2" ? "задня" : "передня";
-    $("active-camera-status").textContent = (saving ? "зберігаю: " : "активна: ") + label;
-    if (audioEnabled && currentAudioStream !== active) startAudio(active);
+    $("tile-" + active)?.classList.add("active");
+    $("tile-" + active)?.classList.remove("pip");
+    $("tile-" + inactive)?.classList.add("pip");
+    $("tile-" + inactive)?.classList.remove("active");
+    $("active-cam1")?.classList.toggle("primary", active === "cam1");
+    $("active-cam2")?.classList.toggle("primary", active === "cam2");
+    const label = active === "cam2" ? "�����" : "�������";
+    if ($("active-camera-status")) $("active-camera-status").textContent = (saving ? "�������: " : "�������: ") + label;
+    if (audioEnabled && audioCameraName !== active) startAudio("active_audio");
   }
 
   async function setActiveCamera(name) {
@@ -1072,10 +1011,10 @@
       const data = await save.json();
       applyActiveCamera((data.settings && data.settings.video && data.settings.video.active_stream) || active, false);
     } catch (e) {
-      $("active-camera-status").textContent = "перемикання не вдалося";
+      $("active-camera-status").textContent = "����������� �� �������";
     }
   }
 
-  startCamera($("cam1"), "cam1").catch((e) => console.error("cam1:", e));
-  startCamera($("cam2"), "cam2").catch((e) => console.error("cam2:", e));
+  stopCamera("cam1", $("cam1"));
+  stopCamera("cam2", $("cam2"));
 })();

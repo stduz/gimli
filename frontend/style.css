@@ -10,19 +10,15 @@
 }
 
 * { box-sizing: border-box; }
-html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
+html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--fg);
   font-family: ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
-  overscroll-behavior: none; touch-action: none; }
+  overscroll-behavior: none; touch-action: pan-x pan-y; }
 
 .topbar { display: flex; justify-content: space-between; align-items: center; gap: 12px;
   min-height: 49px; padding: 7px 12px; border-bottom: 1px solid var(--line); background: var(--bg-tile); }
 .brand { letter-spacing: 3px; color: var(--accent); font-weight: 700; font-size: 14px; }
-.top-actions { display: flex; align-items: center; gap: 8px; margin-right: auto; }
-.top-actions .toggle { padding: 8px 10px; }
-.top-actions .estop { padding: 8px 14px; border-radius: 6px; font-size: 12px; letter-spacing: 3px; }
-.status { color: var(--dim); font-size: 13px; }
-.mode-strip { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
-.mode-chip {
+.status-strip { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.status-chip {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -35,22 +31,18 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
   font-size: 11px;
   letter-spacing: 1px;
 }
-.mode-chip b { color: var(--accent); font-weight: 700; }
-.mode-chip b.bad { color: var(--bad); }
-.mode-chip b.ok { color: var(--ok); }
-.sep { margin: 0 8px; opacity: 0.5; }
-.dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%;
-  background: var(--bad); margin-right: 6px; vertical-align: middle; }
-.dot.on { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+.status-chip b { color: var(--accent); font-weight: 700; }
+.status-chip b.bad { color: var(--bad); }
+.status-chip b.ok { color: var(--ok); }
 
 .grid {
   display: grid;
   grid-template-columns: 1fr;
-  grid-template-rows: minmax(0, 1fr);
-  grid-template-areas: "cams";
-  gap: 8px;
-  padding: 8px;
-  height: calc(100vh - 49px);
+  grid-template-rows: auto;
+  grid-template-areas: "settings";
+  gap: 0;
+  padding: 0;
+  min-height: calc(100vh - 49px);
 }
 
 .cam-wrap {
@@ -62,6 +54,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
   grid-template-rows: auto minmax(0, 1fr);
   gap: 8px;
 }
+.cam-wrap { display: none; }
 .camera-switcher { grid-column: 1 / -1; }
 .cam-tile { position: relative; background: #000; border: 1px solid var(--line);
   border-radius: 8px; overflow: hidden; min-height: 0; }
@@ -109,15 +102,6 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
 .camera-switcher .toggle { padding: 7px 9px; font-size: 11px; }
 #active-camera-status { color: var(--dim); font-size: 11px; }
 
-.osd { display: none; grid-area: osd; grid-template-columns: repeat(5, minmax(120px, 1fr)); gap: 6px 14px;
-  padding: 10px 12px; background: rgba(11, 13, 16, 0.62);
-  border: 1px solid rgba(125, 211, 252, 0.25); border-radius: 8px;
-  backdrop-filter: blur(6px); }
-.osd > div { display: flex; justify-content: space-between; gap: 16px; }
-.osd .k { color: var(--dim); font-size: 10px; text-transform: uppercase; letter-spacing: 1.5px; }
-.osd .v { color: var(--fg); font-size: 11px; text-align: right; font-variant-numeric: tabular-nums; }
-.osd .v.bad { color: var(--bad); }
-
 .hud { display: none; }
 .readout { background: var(--bg-tile); border: 1px solid var(--line); border-radius: 8px;
   padding: 14px; display: grid; gap: 10px; }
@@ -159,27 +143,24 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
   border-radius: 8px; padding: 12px; z-index: 10; font-size: 12px;
   box-shadow: 0 8px 32px rgba(0,0,0,0.5); }
 .settings-panel {
-  position: fixed;
-  left: 12px;
-  right: 12px;
-  top: 56px;
-  max-height: min(68vh, 720px);
+  grid-area: settings;
+  position: static;
+  max-height: none;
   width: auto;
-  overflow-y: auto;
-  background: var(--bg-tile);
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  overflow: visible;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
   padding: 12px;
-  z-index: 5;
   font-size: 12px;
-  box-shadow: 0 8px 32px rgba(0,0,0,0.35);
 }
 .tx12-panel.hidden { display: none; }
-.settings-panel.hidden { display: none; }
+.settings-panel.hidden { display: block; }
 .tx12-head, .settings-head { display: flex; justify-content: space-between; align-items: center;
   color: var(--accent); letter-spacing: 2px; margin-bottom: 8px; }
 .tx12-head .x, .settings-head .x { background: transparent; color: var(--dim); border: none; font-size: 20px;
   cursor: pointer; line-height: 1; padding: 0 4px; }
+.settings-head .x { display: none; }
 .tx12-id { color: var(--dim); font-size: 11px; margin-bottom: 10px; word-break: break-all; }
 .tx12-cfg { display: grid; gap: 6px; padding: 8px 0; border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line); margin-bottom: 10px; }
@@ -206,6 +187,37 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
 .camera-settings, .motor-settings, .network-settings { display: grid; grid-template-columns: repeat(4, minmax(140px, 1fr)); gap: 7px; margin-bottom: 12px; }
 .camera-settings { padding-bottom: 10px; border-bottom: 1px solid rgba(31, 38, 48, 0.7); }
 .camera-settings label:first-child { grid-column: 1 / -1; }
+.camera-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding: 8px;
+  border: 1px solid rgba(125, 211, 252, 0.2);
+  border-radius: 6px;
+  background: rgba(11, 13, 16, 0.35);
+}
+.camera-action-title {
+  color: var(--accent);
+  font-size: 11px;
+  letter-spacing: 1px;
+  min-width: 118px;
+}
+.camera-actions button {
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 7px 9px;
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.camera-actions button:hover { border-color: var(--accent); }
+.camera-actions label { max-width: 170px; }
+.camera-actions input[type="range"] { accent-color: var(--accent); min-width: 90px; }
+.camera-actions span { color: var(--dim); font-size: 11px; min-width: 92px; }
 .settings-panel label { display: flex; align-items: center; gap: 6px; color: var(--dim); min-width: 0; }
 .settings-panel input[type="text"], .settings-panel input[type="password"], .settings-panel input[type="number"], .settings-panel select {
   width: 100%; min-width: 0; background: var(--bg); color: var(--fg);
@@ -270,16 +282,15 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
 }
 
 @media (max-width: 700px) {
-  .grid { grid-template-rows: minmax(0, 1fr); grid-template-areas: "cams"; }
+  .grid { grid-template-rows: auto; grid-template-areas: "settings"; }
   .cam-wrap { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr) minmax(0, 1fr); }
-  .osd { grid-template-columns: 1fr 1fr; }
   .tx12-panel, .settings-panel { right: 6px; left: 6px; width: auto; }
-  .settings-panel { top: 56px; max-height: 72vh; }
+  .settings-panel { top: auto; max-height: none; }
   .camera-settings, .motor-settings, .network-settings { grid-template-columns: 1fr; }
   .compass-cal-box { grid-template-columns: 1fr; }
   .compass-cal-box .wide { grid-column: auto; }
   .topbar { flex-wrap: wrap; }
-  .top-actions { order: 3; width: 100%; }
+  .status-strip { width: 100%; justify-content: flex-start; }
   .camera-switcher { justify-content: flex-end; }
   .cam-controls { left: 8px; right: 8px; top: 30px; max-width: none; flex-wrap: wrap; }
 }

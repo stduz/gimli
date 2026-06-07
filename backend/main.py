@@ -23,6 +23,7 @@ import os
 import time
 import threading
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote
 import urllib.request
@@ -53,6 +54,7 @@ from backend.settings import (
 from backend.watchdog import SystemdWatchdog
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
+LIGHT_KEEPALIVE: dict[str, dict[str, Any]] = {}
 
 
 # ---- мотор-драйвер: реальный или mock ----------------------------------------
@@ -146,6 +148,28 @@ async def watchdog_task(watchdog: SystemdWatchdog) -> None:
         await asyncio.sleep(1.0)
 
 
+async def camera_time_sync_task() -> None:
+    await asyncio.sleep(20.0)
+    while True:
+        await asyncio.to_thread(sync_camera_times)
+        await asyncio.sleep(30.0)
+
+
+async def camera_light_keepalive_task() -> None:
+    while True:
+        await asyncio.sleep(10.0)
+        desired = dict(LIGHT_KEEPALIVE)
+        if not desired:
+            continue
+        settings = load_settings()
+        for camera, state in desired.items():
+            cam = settings.get("cameras", {}).get(camera)
+            if not cam or not cam.get("enabled", True):
+                continue
+            level = int(state.get("level", 80) or 80)
+            await asyncio.to_thread(_set_camera_light, cam, "on", level)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     watchdog = SystemdWatchdog()
@@ -159,14 +183,26 @@ async def lifespan(app: FastAPI):
     )
     app.state.control_command_thread.start()
     app.state.watchdog_task = asyncio.create_task(watchdog_task(watchdog))
+    app.state.camera_time_sync_task = asyncio.create_task(camera_time_sync_task())
+    app.state.camera_light_keepalive_task = asyncio.create_task(camera_light_keepalive_task())
     watchdog.ready()
     try:
         yield
     finally:
         watchdog.stopping()
         app.state.watchdog_task.cancel()
+        app.state.camera_time_sync_task.cancel()
+        app.state.camera_light_keepalive_task.cancel()
         try:
             await app.state.watchdog_task
+        except asyncio.CancelledError:
+            pass
+        try:
+            await app.state.camera_time_sync_task
+        except asyncio.CancelledError:
+            pass
+        try:
+            await app.state.camera_light_keepalive_task
         except asyncio.CancelledError:
             pass
         stop_event.set()
@@ -175,6 +211,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Gimli Rover", lifespan=lifespan)
+_video_process_lock = threading.Lock()
+_video_processes: dict[str, subprocess.Popen[bytes]] = {}
 
 
 @app.get("/api/health")
@@ -350,7 +388,7 @@ def get_compass_status() -> JSONResponse:
 @app.post("/api/webrtc")
 async def webrtc_offer(request: Request, src: str = "active") -> PlainTextResponse:
     """Proxy WebRTC SDP offers to go2rtc so the web UI can play camera audio."""
-    if src not in {"cam1", "cam2", "active"}:
+    if src not in {"cam1", "cam2", "active", "active_audio"}:
         return PlainTextResponse("unknown stream", status_code=404)
     offer = await request.body()
     try:
@@ -373,6 +411,10 @@ def video_mjpeg(stream: str) -> StreamingResponse:
         return JSONResponse({"ok": False, "message": "unknown stream"}, status_code=404)
 
     def chunks():
+        with _video_process_lock:
+            old_proc = _video_processes.pop(stream, None)
+            if old_proc and old_proc.poll() is None:
+                old_proc.terminate()
         proc = subprocess.Popen(
             [
                 "ffmpeg",
@@ -389,6 +431,8 @@ def video_mjpeg(stream: str) -> StreamingResponse:
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
         )
+        with _video_process_lock:
+            _video_processes[stream] = proc
         try:
             if proc.stdout is None:
                 return
@@ -398,6 +442,9 @@ def video_mjpeg(stream: str) -> StreamingResponse:
                     break
                 yield data
         finally:
+            with _video_process_lock:
+                if _video_processes.get(stream) is proc:
+                    _video_processes.pop(stream, None)
             if proc.poll() is None:
                 proc.terminate()
                 try:
@@ -434,6 +481,10 @@ def camera_control(camera: str, payload: dict[str, Any]) -> JSONResponse:
     level = int(payload.get("level", 60) or 60)
     level = max(0, min(100, level))
     ok, message = _set_camera_light(cam, mode, level)
+    if ok and mode in {"on", "forceon", "force_on", "manual", "white"}:
+        LIGHT_KEEPALIVE[camera] = {"level": level, "updated_ts": time.time()}
+    elif ok:
+        LIGHT_KEEPALIVE.pop(camera, None)
     return JSONResponse({"ok": ok, "message": message}, status_code=200 if ok else 500)
 
 
@@ -456,7 +507,10 @@ def tune_camera_video(payload: dict[str, Any] | None = None) -> JSONResponse:
 
     if ok_any:
         for cam in settings.get("cameras", {}).values():
-            cam["preferred"] = "sub" if profile == "low" else cam.get("preferred", "main")
+            if profile == "low":
+                cam["preferred"] = "sub"
+            elif profile == "high":
+                cam["preferred"] = "main"
         settings.setdefault("network", {})["profile"] = profile
         settings.setdefault("network", {})["target_kbps"] = target_kbps
         settings = save_settings(settings)
@@ -478,6 +532,121 @@ def tune_camera_video(payload: dict[str, Any] | None = None) -> JSONResponse:
     )
 
 
+@app.post("/api/cameras/sync-time")
+def sync_camera_time_endpoint() -> JSONResponse:
+    result = sync_camera_times()
+    ok = any(item.get("ok") for item in result.values())
+    return JSONResponse({"ok": ok, "results": result}, status_code=200 if ok else 500)
+
+
+def sync_camera_times() -> dict[str, Any]:
+    settings = load_settings()
+    now = datetime.now().replace(microsecond=0)
+    results: dict[str, Any] = {}
+    for name, cam in settings.get("cameras", {}).items():
+        if name not in {"cam1", "cam2"} or not cam.get("enabled", True):
+            continue
+        ok, message, camera_time = _sync_one_camera_time(cam, now)
+        results[name] = {
+            "ok": ok,
+            "message": message,
+            "target_time": _fmt_camera_time(now),
+            "camera_time": _fmt_camera_time(camera_time) if camera_time else None,
+        }
+    if results:
+        print(f"camera time sync: {results}", flush=True)
+    return results
+
+
+def _sync_one_camera_time(cam: dict[str, Any], target: datetime) -> tuple[bool, str, datetime | None]:
+    _set_camera_timezone(cam)
+    ok, message = _set_camera_time(cam, _fmt_camera_time(target))
+    if not ok:
+        return False, message, None
+    read_ok, read_message, camera_time = _get_camera_time(cam)
+    if not read_ok or camera_time is None:
+        return False, f"{message}; readback failed: {read_message}", None
+    delta = camera_time - target
+    if abs(delta.total_seconds()) <= 3:
+        return True, message, camera_time
+
+    adjusted = target - delta
+    ok, message = _set_camera_time(cam, _fmt_camera_time(adjusted))
+    if not ok:
+        return False, message, camera_time
+    read_ok, read_message, camera_time = _get_camera_time(cam)
+    if not read_ok or camera_time is None:
+        return False, f"{message}; adjusted readback failed: {read_message}", None
+    final_delta = camera_time - target
+    final_ok = abs(final_delta.total_seconds()) <= 3
+    return final_ok, f"{message}; adjusted by {-delta}", camera_time
+
+
+def _fmt_camera_time(value: datetime) -> str:
+    return value.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _get_camera_time(cam: dict[str, Any]) -> tuple[bool, str, datetime | None]:
+    host = str(cam.get("host", "")).strip()
+    username = str(cam.get("username", "admin") or "admin")
+    password = str(cam.get("password", "") or "")
+    if not host or not password:
+        return False, "camera host/password is missing", None
+    url = f"http://{host}/cgi-bin/global.cgi?action=getCurrentTime"
+    try:
+        result = subprocess.run(
+            ["curl", "--globoff", "--digest", "-u", f"{username}:{password}", "-sS", "--max-time", "5", url],
+            capture_output=True,
+            text=True,
+            timeout=7,
+        )
+    except Exception as exc:
+        return False, str(exc), None
+    output = (result.stdout + result.stderr).strip()
+    if result.returncode != 0:
+        return False, output or f"curl exit {result.returncode}", None
+    raw = output.split("=", 1)[1].strip() if "=" in output else output.strip()
+    try:
+        return True, output, datetime.strptime(raw, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return False, output or "camera time parse failed", None
+
+
+def _set_camera_timezone(cam: dict[str, Any]) -> tuple[bool, str]:
+    host = str(cam.get("host", "")).strip()
+    username = str(cam.get("username", "admin") or "admin")
+    password = str(cam.get("password", "") or "")
+    if not host or not password:
+        return False, "camera host/password is missing"
+    pairs = [
+        ("NTP.TimeZone", "3"),
+        ("NTP.TimeZoneDesc", "Kyiv"),
+        ("Locales.DSTEnable", "false"),
+    ]
+    return _camera_set_config(host, username, password, pairs)
+
+
+def _set_camera_time(cam: dict[str, Any], value: str) -> tuple[bool, str]:
+    host = str(cam.get("host", "")).strip()
+    username = str(cam.get("username", "admin") or "admin")
+    password = str(cam.get("password", "") or "")
+    if not host or not password:
+        return False, "camera host/password is missing"
+    url = f"http://{host}/cgi-bin/global.cgi?action=setCurrentTime&time={quote(value)}"
+    try:
+        result = subprocess.run(
+            ["curl", "--globoff", "--digest", "-u", f"{username}:{password}", "-sS", "--max-time", "5", url],
+            capture_output=True,
+            text=True,
+            timeout=7,
+        )
+    except Exception as exc:
+        return False, str(exc)
+    output = (result.stdout + result.stderr).strip()
+    ok = result.returncode == 0 and ("ok" in output.lower() or "true" in output.lower())
+    return ok, output or f"curl exit {result.returncode}"
+
+
 def _tune_dahua_video(cam: dict[str, Any], profile: str, target_kbps: int) -> tuple[bool, str]:
     host = str(cam.get("host", "")).strip()
     username = str(cam.get("username", "admin") or "admin")
@@ -487,14 +656,14 @@ def _tune_dahua_video(cam: dict[str, Any], profile: str, target_kbps: int) -> tu
 
     if profile == "low":
         main_bitrate = max(500, min(1200, target_kbps))
-        main_fps, main_gop = 10, 20
-        sub_bitrate, sub_fps, sub_gop = 350, 8, 16
+        main_fps, main_gop = 12, 12
+        sub_bitrate, sub_fps, sub_gop = 350, 10, 10
     elif profile == "high":
-        main_bitrate, main_fps, main_gop = 3500, 20, 40
-        sub_bitrate, sub_fps, sub_gop = 700, 10, 20
+        main_bitrate, main_fps, main_gop = 3500, 20, 20
+        sub_bitrate, sub_fps, sub_gop = 700, 12, 12
     else:
-        main_bitrate, main_fps, main_gop = 1600, 12, 24
-        sub_bitrate, sub_fps, sub_gop = 450, 8, 16
+        main_bitrate, main_fps, main_gop = 1600, 15, 15
+        sub_bitrate, sub_fps, sub_gop = 450, 10, 10
 
     query_sets: list[list[tuple[str, str]]] = [
         _dahua_encode_pairs("MainFormat", main_bitrate, main_fps, main_gop),
@@ -603,45 +772,45 @@ def _set_camera_light(cam: dict[str, Any], mode: str, level: int) -> tuple[bool,
     if not host or not password:
         return False, "camera host/password is missing"
 
-    if mode in {"on", "manual", "white"}:
-        dahua_modes = ["Manual", "ForceOn"]
+    level = max(0, min(100, int(level or 80)))
+    hold_s = 300
+
+    if mode in {"on", "forceon", "force_on", "white"}:
+        dahua_modes = ["ForceOn"]
+    elif mode == "manual":
+        dahua_modes = ["Manual"]
     elif mode in {"off", "disable"}:
-        dahua_modes = ["Off", "ForceOff"]
-    elif mode in {"auto", "smart"}:
+        dahua_modes = ["Off"]
+    elif mode in {"forceoff", "force_off"}:
+        dahua_modes = ["ForceOff"]
+    elif mode == "auto":
         dahua_modes = ["Auto"]
+    elif mode in {"smart", "ai", "aimix", "smartlight", "smart_light"}:
+        dahua_modes = ["SmartLight", "Smart", "Auto"]
     else:
         return False, "unknown light mode"
 
     query_sets: list[list[tuple[str, str]]] = []
     for dahua_mode in dahua_modes:
-        for prefix in ("", "All."):
-            for profile in (0, 1, 2):  # day, night, general/scene depending on firmware
-                for light_index in (0, 1):  # most Dahua firmwares use [0], some dual-light models use [1]
-                    head = f"{prefix}Lighting_V2[0][{profile}][{light_index}]"
-                    query_sets.append(
-                        [
-                            (f"{head}.Mode", dahua_mode),
-                            (f"{head}.Light", str(level)),
-                            (f"{head}.Brightness", str(level)),
-                            (f"{head}.MiddleLight[0].Light", str(level)),
-                            (f"{head}.NearLight[0].Light", str(level)),
-                            (f"{head}.FarLight[0].Light", str(level)),
-                        ]
-                    )
-                    query_sets.append([(f"{head}.Mode", dahua_mode)])
-            for profile in (0, 1, 2):
-                head = f"{prefix}Lighting[0][{profile}]"
-                query_sets.append(
-                    [
-                        (f"{head}.Mode", dahua_mode),
-                        (f"{head}.Light", str(level)),
-                        (f"{head}.Brightness", str(level)),
-                        (f"{head}.MiddleLight[0].Light", str(level)),
-                        (f"{head}.NearLight[0].Light", str(level)),
-                        (f"{head}.FarLight[0].Light", str(level)),
-                    ]
-                )
-                query_sets.append([(f"{head}.Mode", dahua_mode)])
+        for profile in (0, 1, 2):  # day, night, general/scene depending on firmware
+            for light_index in (0, 1):  # [0] white light, [1] AI/smart light on these Dahua cameras
+                head = f"Lighting_V2[0][{profile}][{light_index}]"
+                pairs = [
+                    (f"{head}.Mode", dahua_mode),
+                    (f"{head}.PercentOfMaxBrightness", str(level)),
+                    (f"{head}.MiddleLight[0].Light", str(level)),
+                ]
+                if light_index == 1:
+                    pairs.append((f"{head}.AIMixLightSwitchDelay", str(hold_s)))
+                query_sets.append(pairs)
+        for profile in (0, 1, 2, 3):
+            head = f"Lighting[0][{profile}]"
+            query_sets.append(
+                [
+                    (f"{head}.Mode", dahua_mode),
+                    (f"{head}.MiddleLight[0].Light", str(level)),
+                ]
+            )
 
     last = ""
     accepted = 0

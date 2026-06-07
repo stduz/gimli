@@ -78,9 +78,15 @@ CRC_EXTRA = {
 MAV_CMD_REQUEST_MESSAGE = 512
 MAV_CMD_REQUEST_CAMERA_INFORMATION = 521          # legacy
 MAV_CMD_REQUEST_VIDEO_STREAM_INFORMATION = 2504   # legacy
+MAV_CMD_GIMLI_CONTROL = 31010
+GIMLI_ACTION_CAMERA = 1
+GIMLI_ACTION_QUALITY = 2
+GIMLI_ACTION_DAYNIGHT = 3
+GIMLI_ACTION_PARKTRONIC = 4
 CAMERA_CAP_FLAGS_HAS_VIDEO_STREAM = 256
 VIDEO_STREAM_TYPE_RTSP = 0
 VIDEO_STREAM_STATUS_FLAGS_RUNNING = 1
+VIDEO_STREAM_STATUS_FLAGS_THERMAL = 2
 MAV_COMP_ID_CAMERA = 100   # отдельный компонент-камера
 
 PARAMS: list[tuple[str, float, int]] = [
@@ -158,6 +164,7 @@ PARAMS: list[tuple[str, float, int]] = [
     ("GIMLI_LIGHT", 0.0, 2),     # 0=auto, 1=on, 2=off
     ("GIMLI_DAYNIGHT", 0.0, 2),  # 0=auto, 1=day/color, 2=night/bw
     ("GIMLI_QUALITY", 1.0, 2),   # 0=sub, 1=main
+    ("GIMLI_PARK", 0.0, 2),      # 0=parking overlay off, 1=on
 ]
 
 GIMLI_PARAM_VALUES: dict[str, float] = {
@@ -165,6 +172,7 @@ GIMLI_PARAM_VALUES: dict[str, float] = {
     "GIMLI_LIGHT": 0.0,
     "GIMLI_DAYNIGHT": 0.0,
     "GIMLI_QUALITY": 1.0,
+    "GIMLI_PARK": 0.0,
 }
 
 BUTTON_STATE: dict[str, Any] = {
@@ -177,6 +185,7 @@ BUTTON_STATE: dict[str, Any] = {
     "cam1_light": False,
     "cam2_light": False,
     "lights": False,
+    "parktronic": False,
     "source": "mavlink",
 }
 
@@ -204,15 +213,28 @@ class MavUdp:
         self.sock.bind(("0.0.0.0", 0))
         self.sock.setblocking(False)
         self.parser = MavParser()
+        self.tcp_clients: list[socket.socket] = []
+        self.tcp_server: socket.socket | None = None
+        try:
+            self.tcp_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.tcp_server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.tcp_server.bind(("0.0.0.0", 5760))
+            self.tcp_server.listen(2)
+            self.tcp_server.setblocking(False)
+            print("MAVLink TCP server listening on 0.0.0.0:5760", flush=True)
+        except OSError as exc:
+            self.tcp_server = None
+            print(f"MAVLink TCP server disabled: {exc}", flush=True)
 
     def send(self, msg_id: int, payload: bytes) -> None:
-        packet = _pack_v1(msg_id, payload, self.seq, self.system_id, self.component_id)
+        packet = _pack_v2(msg_id, payload, self.seq, self.system_id, self.component_id)
         self.seq = (self.seq + 1) % 256
         for target in self.targets:
             try:
                 self.sock.sendto(packet, target)
             except OSError as exc:
                 print(f"mavlink send failed to {target}: {exc}", flush=True)
+        self._send_tcp(packet)
 
     def send_v2(self, msg_id: int, payload: bytes, component_id: int | None = None) -> None:
         comp = self.component_id if component_id is None else component_id
@@ -223,16 +245,64 @@ class MavUdp:
                 self.sock.sendto(packet, target)
             except OSError as exc:
                 print(f"mavlink send failed to {target}: {exc}", flush=True)
+        self._send_tcp(packet)
 
     def recv(self) -> list[tuple[int, bytes]]:
         out: list[tuple[int, bytes]] = []
+        self._accept_tcp()
         while True:
             try:
                 data, _addr = self.sock.recvfrom(4096)
             except BlockingIOError:
                 break
             out.extend(self.parser.feed(data))
+        for client in list(self.tcp_clients):
+            while True:
+                try:
+                    data = client.recv(4096)
+                except BlockingIOError:
+                    break
+                except OSError:
+                    self._close_tcp_client(client)
+                    break
+                if not data:
+                    self._close_tcp_client(client)
+                    break
+                out.extend(self.parser.feed(data))
         return out
+
+    def _accept_tcp(self) -> None:
+        if not self.tcp_server:
+            return
+        while True:
+            try:
+                client, addr = self.tcp_server.accept()
+            except BlockingIOError:
+                return
+            except OSError as exc:
+                print(f"MAVLink TCP accept failed: {exc}", flush=True)
+                return
+            client.setblocking(False)
+            client.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            self.tcp_clients.append(client)
+            print(f"MAVLink TCP client connected: {addr[0]}:{addr[1]}", flush=True)
+
+    def _send_tcp(self, packet: bytes) -> None:
+        for client in list(self.tcp_clients):
+            try:
+                client.sendall(packet)
+            except OSError:
+                self._close_tcp_client(client)
+
+    def _close_tcp_client(self, client: socket.socket) -> None:
+        try:
+            self.tcp_clients.remove(client)
+        except ValueError:
+            pass
+        try:
+            client.close()
+        except OSError:
+            pass
 
 
 class MavParser:
@@ -270,6 +340,7 @@ class MavParser:
 def main() -> None:
     watchdog = SystemdWatchdog()
     settings = load_settings()
+    _sync_video_state_from_settings(settings)
     mav_cfg = settings.get("mavlink", {})
     if not mav_cfg.get("enabled", True):
         print("MAVLink disabled in settings")
@@ -376,8 +447,8 @@ def _send_status(link: MavUdp) -> None:
     power = t.get("power", {})
     voltage = power.get("battery_voltage")
     current = power.get("current_a")
-    voltage_mv = 65535 if voltage is None else int(float(voltage) * 1000)
-    current_ca = -1 if current is None else int(float(current) * 100)
+    voltage_mv = 65535 if voltage is None else max(0, min(65534, int(float(voltage) * 1000)))
+    current_ca = -1 if current is None else max(-32768, min(32767, int(float(current) * 100)))
     sensors = (
         MAV_SYS_STATUS_SENSOR_3D_GYRO
         | MAV_SYS_STATUS_SENSOR_3D_ACCEL
@@ -433,7 +504,10 @@ def _send_navigation(link: MavUdp) -> None:
     boot_ms = int(time.monotonic() * 1000) & 0xFFFFFFFF
     enabled = bool(nav.get("gps_enabled", False))
     fix_type = _clamp_int(nav.get("fix_type", 0), 0, 6) if enabled else 0
-    satellites = _clamp_int(nav.get("satellites", 0), 0, 255) if enabled else 0
+    # Keep satellite visibility even when the position is marked unsafe.
+    # This lets QGC show that the receiver sees GNSS while we still suppress
+    # spoofed/untrusted coordinates by sending fix_type=0.
+    satellites = _clamp_int(nav.get("satellites", 0), 0, 255)
     lat = _coord_to_int(nav.get("latitude"))
     lon = _coord_to_int(nav.get("longitude"))
     alt_mm = int(float(nav.get("altitude_m") or 0.0) * 1000)
@@ -532,7 +606,9 @@ def _handle_message(link: MavUdp, msg_id: int, payload: bytes, last_command: flo
         if not armed:
             _post_control({"cmd": "stop", "source": "mavlink"})
             return last_command, False, armed
-        _post_control({"cmd": "drive", "source": "mavlink", "throttle": _scale_axis(y), "steering": _scale_axis(x)})
+        throttle, steering = _manual_drive_axes(x, y, z, r)
+        _write_control_state(throttle=throttle, steering=steering)
+        _post_control({"cmd": "drive", "source": "mavlink", "throttle": throttle, "steering": steering})
         return time.time(), False, armed
     if msg_id == 21 and len(payload) >= 2:
         return last_command, True, armed
@@ -548,8 +624,8 @@ def _handle_message(link: MavUdp, msg_id: int, payload: bytes, last_command: flo
     if msg_id == 45 and len(payload) >= 2:
         _send_mission_ack(link, payload)
         return last_command, False, armed
-    if msg_id == 76 and len(payload) >= 33:
-        fields = struct.unpack_from("<fffffffHBBB", payload)
+    if msg_id == 76 and len(payload) >= 30:
+        fields = struct.unpack_from("<fffffffHBBB", payload.ljust(33, b"\x00"))
         command = fields[7]
         param1 = fields[0]
         param2 = fields[1]
@@ -596,8 +672,30 @@ def _handle_message(link: MavUdp, msg_id: int, payload: bytes, last_command: flo
             _send_video_stream_information(link, int(param1))
             _send_command_ack(link, command, MAV_RESULT_ACCEPTED)
             return last_command, False, armed
+        if command == MAV_CMD_GIMLI_CONTROL:
+            ok, message = _handle_gimli_command(int(round(param1)), param2)
+            _send_command_ack(link, command, MAV_RESULT_ACCEPTED if ok else MAV_RESULT_UNSUPPORTED)
+            if message:
+                _send_status_text(link, message)
+            return last_command, False, armed
         _send_command_ack(link, command, MAV_RESULT_UNSUPPORTED)
     return last_command, False, armed
+
+
+def _manual_drive_axes(x: int, y: int, z: int, r: int) -> tuple[float, float]:
+    axes = {"x": x, "y": y, "z": z, "r": r}
+    control = load_settings().get("mavlink", {}).get("control", {})
+    throttle_axis = str(control.get("throttle_axis", "y") or "y").lower()
+    steering_axis = str(control.get("steering_axis", "x") or "x").lower()
+    throttle = _scale_axis(axes.get(throttle_axis, y))
+    steering = _scale_axis(axes.get(steering_axis, x))
+    throttle *= max(0.0, min(1.0, float(control.get("throttle_scale", 1.0) or 1.0)))
+    steering *= max(0.0, min(1.0, float(control.get("steering_scale", 1.0) or 1.0)))
+    if control.get("throttle_invert", False):
+        throttle = -throttle
+    if control.get("steering_invert", False):
+        steering = -steering
+    return throttle, steering
 
 
 def _handle_param_request_read(link: MavUdp, payload: bytes) -> None:
@@ -648,14 +746,12 @@ def _handle_gimli_param_set(name: str, value: float) -> None:
     ivalue = int(round(value))
     if name == "GIMLI_CAM":
         ivalue = max(1, min(2, ivalue))
-        GIMLI_PARAM_VALUES[name] = float(ivalue)
-        _post_settings({"video": {"active_stream": "cam2" if ivalue == 2 else "cam1"}})
+        _set_active_camera(ivalue)
         return
     if name == "GIMLI_QUALITY":
         ivalue = 1 if ivalue else 0
-        GIMLI_PARAM_VALUES[name] = float(ivalue)
-        preferred = "main" if ivalue == 1 else "sub"
-        _post_settings({"cameras": {"cam1": {"preferred": preferred}, "cam2": {"preferred": preferred}}})
+        profile = "high" if ivalue == 1 else "low"
+        _set_video_profile(profile)
         return
     if name == "GIMLI_LIGHT":
         ivalue = max(0, min(2, ivalue))
@@ -668,6 +764,38 @@ def _handle_gimli_param_set(name: str, value: float) -> None:
         GIMLI_PARAM_VALUES[name] = float(ivalue)
         mode = {0: "auto", 1: "day", 2: "night"}[ivalue]
         _post_camera(_active_camera(), {"action": "daynight", "mode": mode})
+        return
+    if name == "GIMLI_PARK":
+        _set_parktronic(bool(ivalue))
+
+
+def _handle_gimli_command(action: int, value: float) -> tuple[bool, str]:
+    ivalue = int(round(value))
+    if action == GIMLI_ACTION_CAMERA:
+        if ivalue not in (1, 2):
+            ivalue = 2 if _current_active_cam_switch() == 1 else 1
+        _set_active_camera(ivalue)
+        return True, f"ACTIVE CAM {ivalue}"
+    if action == GIMLI_ACTION_QUALITY:
+        if ivalue not in (0, 1):
+            ivalue = 0 if not _current_quality_low() else 1
+        profile = "high" if ivalue == 1 else "low"
+        _set_video_profile(profile)
+        return True, f"STREAM {'MAIN' if profile == 'high' else 'SUB'}"
+    if action == GIMLI_ACTION_DAYNIGHT:
+        ivalue = max(0, min(2, ivalue))
+        mode = {0: "auto", 1: "day", 2: "night"}[ivalue]
+        GIMLI_PARAM_VALUES["GIMLI_DAYNIGHT"] = float(ivalue)
+        BUTTON_STATE["daynight_switch"] = mode == "night"
+        _post_camera("cam1", {"action": "daynight", "mode": mode})
+        _post_camera("cam2", {"action": "daynight", "mode": mode})
+        _write_control_state(daynight=mode)
+        return True, f"CAM MODE {mode.upper()}"
+    if action == GIMLI_ACTION_PARKTRONIC:
+        enabled = not bool(BUTTON_STATE.get("parktronic", False)) if ivalue not in (0, 1) else bool(ivalue)
+        _set_parktronic(enabled)
+        return True, f"PARK {'ON' if enabled else 'OFF'}"
+    return False, ""
 
 
 def _send_mission_count(link: MavUdp, request_payload: bytes) -> None:
@@ -725,10 +853,11 @@ def _handle_manual_buttons(link: MavUdp, buttons: int, armed: bool) -> bool:
         print(f"manual buttons={buttons} changed={buttons ^ previous}", flush=True)
     BUTTON_STATE["last_buttons"] = buttons
 
-    if _rising(previous, buttons, BTN_ARM):
-        armed = not armed
+    arm_switch = _button(buttons, BTN_ARM)
+    if BUTTON_STATE.get("armed_switch") is None or BUTTON_STATE.get("armed_switch") != arm_switch:
+        armed = arm_switch
         BUTTON_STATE["armed_switch"] = armed
-        print(f"armed={bool(armed)} by button {BTN_ARM + 1}", flush=True)
+        print(f"armed={bool(armed)} by switch {BTN_ARM + 1}", flush=True)
         _send_status_text(link, f"ARM {'ON' if armed else 'OFF'}")
 
     armed = bool(armed)
@@ -746,13 +875,12 @@ def _handle_manual_buttons(link: MavUdp, buttons: int, armed: bool) -> bool:
         _send_status_text(link, f"CAM MODE {mode.upper()}")
 
     if _rising(previous, buttons, BTN_QUALITY_TOGGLE):
-        BUTTON_STATE["quality_low"] = not bool(BUTTON_STATE.get("quality_low", False))
-        BUTTON_STATE["quality_switch"] = -1 if BUTTON_STATE["quality_low"] else 1
-        preferred = "sub" if BUTTON_STATE["quality_low"] else "main"
-        GIMLI_PARAM_VALUES["GIMLI_QUALITY"] = 0.0 if preferred == "sub" else 1.0
-        _post_settings({"cameras": {"cam1": {"preferred": preferred}, "cam2": {"preferred": preferred}}})
-        print(f"camera quality={preferred} by button {BTN_QUALITY_TOGGLE + 1}", flush=True)
-        _send_status_text(link, f"VIDEO {preferred.upper()}")
+        next_low = not _current_quality_low()
+        profile = "low" if next_low else "high"
+        _set_video_profile(profile)
+        preferred = "sub" if profile == "low" else "main"
+        print(f"camera stream={preferred} by button {BTN_QUALITY_TOGGLE + 1}", flush=True)
+        _send_status_text(link, f"STREAM {preferred.upper()}")
 
     if _rising(previous, buttons, BTN_LIGHT_TOGGLE):
         BUTTON_STATE["lights"] = not bool(BUTTON_STATE.get("lights", False))
@@ -766,30 +894,25 @@ def _handle_manual_buttons(link: MavUdp, buttons: int, armed: bool) -> bool:
         _send_status_text(link, f"LIGHTS {mode.upper()}")
 
     if _rising(previous, buttons, BTN_CAMERA_TOGGLE):
-        current_cam = int(BUTTON_STATE.get("cam_switch") or GIMLI_PARAM_VALUES.get("GIMLI_CAM", 1.0) or 1)
+        current_cam = _current_active_cam_switch()
         cam_switch = 2 if current_cam == 1 else 1
-        BUTTON_STATE["cam_switch"] = cam_switch
-        GIMLI_PARAM_VALUES["GIMLI_CAM"] = float(cam_switch)
-        _post_settings({"video": {"active_stream": "cam2" if cam_switch == 2 else "cam1"}})
+        _set_active_camera(cam_switch)
         print(f"active camera=cam{cam_switch} by button {BTN_CAMERA_TOGGLE + 1}", flush=True)
         _send_status_text(link, f"ACTIVE CAM {cam_switch}")
 
     cam_switch = 2 if _button(buttons, BTN_CAM2) else 1 if _button(buttons, BTN_CAM1) else 0
     if cam_switch and BUTTON_STATE.get("cam_switch") != cam_switch:
-        BUTTON_STATE["cam_switch"] = cam_switch
-        GIMLI_PARAM_VALUES["GIMLI_CAM"] = float(cam_switch)
-        _post_settings({"video": {"active_stream": "cam2" if cam_switch == 2 else "cam1"}})
+        _set_active_camera(cam_switch)
         print(f"active camera=cam{cam_switch}", flush=True)
         _send_status_text(link, f"ACTIVE CAM {cam_switch}")
 
     quality_switch = -1 if _button(buttons, BTN_QUALITY_SUB) else 1 if _button(buttons, BTN_QUALITY_MAIN) else 0
     if quality_switch and BUTTON_STATE.get("quality_switch") != quality_switch:
-        BUTTON_STATE["quality_switch"] = quality_switch
+        profile = "high" if quality_switch > 0 else "low"
+        _set_video_profile(profile)
         preferred = "main" if quality_switch > 0 else "sub"
-        GIMLI_PARAM_VALUES["GIMLI_QUALITY"] = 1.0 if preferred == "main" else 0.0
-        _post_settings({"cameras": {"cam1": {"preferred": preferred}, "cam2": {"preferred": preferred}}})
-        print(f"camera quality={preferred}", flush=True)
-        _send_status_text(link, f"VIDEO {preferred.upper()}")
+        print(f"camera stream={preferred}", flush=True)
+        _send_status_text(link, f"STREAM {preferred.upper()}")
 
     if _rising(previous, buttons, BTN_CAM1_LIGHT):
         BUTTON_STATE["cam1_light"] = not bool(BUTTON_STATE.get("cam1_light", False))
@@ -816,6 +939,7 @@ def _handle_manual_buttons(link: MavUdp, buttons: int, armed: bool) -> bool:
         daynight="night" if BUTTON_STATE.get("daynight_switch") else "day",
         quality="sub" if BUTTON_STATE.get("quality_switch") == -1 else "main",
         quality_low=bool(BUTTON_STATE.get("quality_low")),
+        parktronic=bool(BUTTON_STATE.get("parktronic")),
         lights=bool(BUTTON_STATE.get("lights")),
         cam1_light=bool(BUTTON_STATE.get("cam1_light")),
         cam2_light=bool(BUTTON_STATE.get("cam2_light")),
@@ -896,7 +1020,7 @@ def _send_video_stream_information(link: MavUdp, stream_id: int = 0) -> None:
         framerate, bitrate, width, height = 25.0, 4_000_000, 1920, 1080
     else:
         framerate, bitrate, width, height = 12.0, 1_200_000, 1280, 720
-    streams = [("qgc", "qgc"), ("active", "active"), ("cam1", "front"), ("cam2", "rear")]
+    streams = [("qgc", "qgc", False), ("cam2", "rear", True), ("cam1", "front", False)]
     if stream_id == 0:
         targets = [(i + 1, streams[i]) for i in range(len(streams))]
     elif 1 <= stream_id <= len(streams):
@@ -904,14 +1028,17 @@ def _send_video_stream_information(link: MavUdp, stream_id: int = 0) -> None:
     else:
         return
     count = len(streams)
-    for sid, (slug, label) in targets:
+    for sid, (slug, label, is_secondary) in targets:
         uri = _build_stream_uri(slug).encode("ascii", errors="ignore")[:159]
         name = label.encode("ascii", errors="ignore")[:31]
+        flags = VIDEO_STREAM_STATUS_FLAGS_RUNNING
+        if is_secondary:
+            flags |= VIDEO_STREAM_STATUS_FLAGS_THERMAL
         payload = struct.pack(
             "<fIHHHHHBBB32s160s",
             framerate,
             bitrate,
-            VIDEO_STREAM_STATUS_FLAGS_RUNNING,
+            flags,
             width, height,
             0,
             90,
@@ -1108,6 +1235,56 @@ def _post_settings(payload: dict[str, Any]) -> None:
 
 def _post_camera(camera: str, payload: dict[str, Any]) -> None:
     _post_json(BACKEND_CAMERA_URL.format(camera=camera), payload, timeout=2.5)
+
+
+def _set_active_camera(cam_switch: int) -> None:
+    cam_switch = 2 if int(cam_switch) == 2 else 1
+    BUTTON_STATE["cam_switch"] = cam_switch
+    GIMLI_PARAM_VALUES["GIMLI_CAM"] = float(cam_switch)
+    _post_settings({"video": {"active_stream": "cam2" if cam_switch == 2 else "cam1"}})
+
+
+def _set_video_profile(profile: str) -> None:
+    preferred = "sub" if str(profile).lower() == "low" else "main"
+    BUTTON_STATE["quality_low"] = preferred == "sub"
+    BUTTON_STATE["quality_switch"] = -1 if preferred == "sub" else 1
+    GIMLI_PARAM_VALUES["GIMLI_QUALITY"] = 0.0 if preferred == "sub" else 1.0
+    _post_settings({"cameras": {"cam1": {"preferred": preferred}, "cam2": {"preferred": preferred}}})
+
+
+def _set_parktronic(enabled: bool) -> None:
+    BUTTON_STATE["parktronic"] = bool(enabled)
+    GIMLI_PARAM_VALUES["GIMLI_PARK"] = 1.0 if enabled else 0.0
+    _write_control_state(parktronic=bool(enabled))
+
+
+def _sync_video_state_from_settings(settings: dict[str, Any] | None = None) -> None:
+    settings = settings or load_settings()
+    cam_switch = 2 if settings.get("video", {}).get("active_stream") == "cam2" else 1
+    BUTTON_STATE["cam_switch"] = cam_switch
+    GIMLI_PARAM_VALUES["GIMLI_CAM"] = float(cam_switch)
+    cam1 = settings.get("cameras", {}).get("cam1", {})
+    low = str(cam1.get("preferred", "main") or "main").lower() == "sub"
+    BUTTON_STATE["quality_low"] = low
+    BUTTON_STATE["quality_switch"] = -1 if low else 1
+    GIMLI_PARAM_VALUES["GIMLI_QUALITY"] = 0.0 if low else 1.0
+
+
+def _current_active_cam_switch() -> int:
+    try:
+        active = load_settings().get("video", {}).get("active_stream", "cam1")
+        return 2 if active == "cam2" else 1
+    except Exception:
+        return 2 if int(GIMLI_PARAM_VALUES.get("GIMLI_CAM", 1.0) or 1) == 2 else 1
+
+
+def _current_quality_low() -> bool:
+    try:
+        settings = load_settings()
+        cam1 = settings.get("cameras", {}).get("cam1", {})
+        return str(cam1.get("preferred", "main") or "main").lower() == "sub"
+    except Exception:
+        return bool(BUTTON_STATE.get("quality_low", False))
 
 
 def _post_json(url: str, payload: dict[str, Any], timeout: float = 0.5) -> None:

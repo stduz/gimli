@@ -51,3 +51,8 @@ build/
 local/
 sandbox/
 scratch/
+
+# --- QGroundControl custom workspace (large external source/build trees) ---
+qgc-custom/source/
+qgc-custom/build/
+qgc-custom/install/
